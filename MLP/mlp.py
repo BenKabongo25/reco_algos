@@ -113,7 +113,7 @@ def main(config):
     # Results
     results = {"test": test_results.metric_avg_results, "val": val_results.metric_avg_results}
     os.makedirs(config.save_dir, exist_ok=True)
-    json.dump(results, open(f"{config.save_dir}/{config.exp_name}.json", "w"))
+    json.dump(results, open(os.path.join(config.save_dir, f"{config.exp_name}.json"), "w"))
 
 
 if __name__ == "__main__":
