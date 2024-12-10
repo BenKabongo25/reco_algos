@@ -4,16 +4,16 @@ python3 mlp.py \
     --train_size 0.8 \
     --test_size 0.1 \
     --val_size 0.1 \
-    --layers 128,64,32,16 \
+    --layers 128 64 32 16 \
     --act_fn relu \
     --reg 0.0 \
-    --num_epochs 20 \
+    --num_epochs 50 \
     --batch_size 256 \
     --num_neg 4 \
     --lr 0.001 \
     --learner adam \
-    --backend pytorch 
-    --early_stopping None \
+    --backend pytorch \
+    --early_stopping 5 \
     --trainable \
     --seed 42 \
     --user_column user_id \
