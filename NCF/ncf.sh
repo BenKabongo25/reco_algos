@@ -35,7 +35,7 @@ python3 ncf.py \
     --hit \
     --map \
     --mrr \
-    --exp_name MLP \
+    --exp_name NCF \
     --show_validation \
     --verbose \
-    --save_dir /home/b.kabongo/exps/TripAdvisor/MLP/
+    --save_dir /home/b.kabongo/exps/TripAdvisor/NCF/
