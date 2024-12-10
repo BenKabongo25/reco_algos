@@ -1,5 +1,5 @@
-# MLP
-# Doc: https://cornac.readthedocs.io/en/stable/api_ref/models.html#module-cornac.models.ncf.recom_mlp
+# NCF: Neural Collaborative Filtering
+# Doc: https://cornac.readthedocs.io/en/stable/api_ref/models.html#module-cornac.models.ncf.recom_neumf
 
 
 import argparse
@@ -59,7 +59,8 @@ def main(config):
         )
 
     # Model
-    model = cornac.models.MLP(
+    model = cornac.models.NeuMF(
+        num_factors=config.num_factors,
         layers=config.layers,
         act_fn=config.act_fn,
         reg=config.reg,
@@ -118,7 +119,8 @@ def main(config):
 if __name__ == "__main__":
     args = argparse.ArgumentParser()
 
-    # MLP Cornac args
+    # NCF Cornac args
+    args.add_argument("--num_factors", type=int, default=8)
     args.add_argument("--layers", type=int, nargs="+", default=[64, 32, 16, 8])
     args.add_argument("--act_fn", type=str, default="relu") # ‘sigmoid’, ‘tanh’, ‘elu’, ‘relu’, ‘selu, ‘relu6’, ‘leaky_relu’
     args.add_argument("--reg", type=float, default=0.0)

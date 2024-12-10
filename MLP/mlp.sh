@@ -13,7 +13,6 @@ python3 mlp.py \
     --lr 0.001 \
     --learner adam \
     --backend pytorch \
-    --early_stopping 5 \
     --trainable \
     --seed 42 \
     --user_column user_id \
