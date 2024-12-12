@@ -310,8 +310,7 @@ class NCFBase(Recommender):
         if self.backend == "tensorflow":
             self.saver.save(self.sess, model_file.replace(".pkl", ".cpt"))
         elif self.backend == "pytorch":
-            # TODO: implement model saving for PyTorch
-            raise NotImplementedError()
+            torch.save(self.model.state_dict(), model_file.replace(".pkl", ".cpt"))
 
         return model_file
 
