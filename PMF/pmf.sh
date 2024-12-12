@@ -1,0 +1,37 @@
+python3 pmf.py \
+    --data_path /home/b.kabongo/datasets/TripAdvisor/data.csv \
+    --fmt UIR \
+    --train_size 0.8 \
+    --test_size 0.1 \
+    --val_size 0.1 \
+    --k 128 \
+    --max_iter 50 \
+    --learning_rate 0.01 \
+    --gamma 0.9 \
+    --lambda_reg 0.001 \
+    --variant non_linear \
+    --trainable \
+    --seed 42 \
+    --user_column user_id \
+    --item_column item_id \
+    --rating_column rating \
+    --timestamp_column timestamp \
+    --no-timestamp \
+    --rating_threshold 4.0 \
+    --no-exclude_unknowns \
+    --rmse \
+    --mae \
+    --no-rating_user_based \
+    --ranking_k 10 \
+    --precision \
+    --recall \
+    --f1 \
+    --auc \
+    --ndcg \
+    --hit \
+    --map \
+    --mrr \
+    --exp_name PMF \
+    --show_validation \
+    --verbose \
+    --save_dir /home/b.kabongo/exps/TripAdvisor/PMF/
