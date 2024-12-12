@@ -51,6 +51,8 @@ if __name__ == "__main__":
     args.add_argument("--timestamp", action=argparse.BooleanOptionalAction)
     args.set_defaults(timestamp=False)
 
+    args.add_argument("--binary", action=argparse.BooleanOptionalAction)
+    args.set_defaults(binary=False)
     args.add_argument("--rating_threshold", type=float, default=4.0)
     args.add_argument("--exclude_unknowns", action=argparse.BooleanOptionalAction)
     args.set_defaults(exclude_unknowns=False)
@@ -92,7 +94,13 @@ if __name__ == "__main__":
     config = args.parse_args()
 
     # Model
-    model = cornac.models.MLP(
+    if config.binary:
+        MLP = cornac.models.MLP
+    else:
+        from NCF.regression_pytorch import MLPRecommender
+        MLP = MLPRecommender
+
+    model = MLP(
         layers=config.layers,
         act_fn=config.act_fn,
         reg=config.reg,

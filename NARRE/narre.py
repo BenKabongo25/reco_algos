@@ -1,12 +1,13 @@
 # Ben Kabongo
 # December 2024
 
-# NCF: Neural Collaborative Filtering
-# Doc: https://cornac.readthedocs.io/en/stable/api_ref/models.html#module-cornac.models.ncf.recom_neumf
+# NARRE: Neural Attention Rating Regression with Review-level Explanations
+# Doc: https://cornac.readthedocs.io/en/stable/api_ref/models.html#module-cornac.models.narre.recom_narre
 
 
 import argparse
 import cornac
+import json
 
 import os
 import sys
@@ -18,20 +19,27 @@ from utils.common import main
 if __name__ == "__main__":
     args = argparse.ArgumentParser()
 
-    # NCF Cornac args
-    args.add_argument("--num_factors", type=int, default=8)
-    args.add_argument("--layers", type=int, nargs="+", default=[64, 32, 16, 8])
-    args.add_argument("--act_fn", type=str, default="relu") # ‘sigmoid’, ‘tanh’, ‘elu’, ‘relu’, ‘selu, ‘relu6’, ‘leaky_relu’
-    args.add_argument("--reg", type=float, default=0.0)
-    args.add_argument("--num_epochs", type=int, default=20)
-    args.add_argument("--batch_size", type=int, default=256)
-    args.add_argument("--num_neg", type=int, default=4)
-    args.add_argument("--lr", type=float, default=0.001)
-    args.add_argument("--learner", type=str, default="adam") # adagrad, adam, rmsprop, sgd
-    args.add_argument("--backend", type=str, default="pytorch") # tensorflow, pytorch
+    # NARRE Cornac args
+    args.add_argument("--embedding_size", type=int, default=100)
+    args.add_argument("--id_embedding_size", type=int, default=32)
+    args.add_argument("--n_factors", type=int, default=32)
+    args.add_argument("--attention_size", type=int, default=16)
+    args.add_argument("--kernel_sizes", type=int, nargs="+", default=[3])
+    args.add_argument("--n_filters", type=int, default=64)
+    args.add_argument("--dropout_rate", type=float, default=0.5)
+    args.add_argument("--max_text_length", type=int, default=50)
+    args.add_argument("--max_num_review", type=int, default=32)
+    args.add_argument("--batch_size", type=int, default=64)
+    args.add_argument("--max_iter", type=int, default=10)
+    args.add_argument("--optimizer", type=str, default="adam")
+    args.add_argument("--learning_rate", type=float, default=0.001)
+    args.add_argument("--model_selection", type=str, default="last")
+    args.add_argument("--user_based", action=argparse.BooleanOptionalAction)
+    args.set_defaults(user_based=True)
     args.add_argument("--trainable", action=argparse.BooleanOptionalAction)
     args.set_defaults(trainable=True)
-    args.add_argument("--seed", type=int, default=42)
+    args.add_argument("--init_params_file", type=str, default="")
+    args.add_argument("--seed", type=int, default=None)
 
     # Data args
     args.add_argument("--data_path", type=str, default="")
@@ -51,9 +59,7 @@ if __name__ == "__main__":
     args.add_argument("--timestamp_column", type=str, default="timestamp")
     args.add_argument("--timestamp", action=argparse.BooleanOptionalAction)
     args.set_defaults(timestamp=False)
-    
-    args.add_argument("--binary", action=argparse.BooleanOptionalAction)
-    args.set_defaults(binary=False)
+
     args.add_argument("--rating_threshold", type=float, default=4.0)
     args.add_argument("--exclude_unknowns", action=argparse.BooleanOptionalAction)
     args.set_defaults(exclude_unknowns=False)
@@ -95,25 +101,28 @@ if __name__ == "__main__":
     config = args.parse_args()
 
     # Model
-    if config.binary:
-        NeuMF = cornac.models.NeuMF
+    if not config.trainable:
+        if config.init_params_file == "":
+            raise ValueError("init_params_file must be provided when trainable=False")
+        init_params = json.load(open(config.init_params_file, "r"))
     else:
-        from regression_pytorch import NeuMFRecommender
-        NeuMF = NeuMFRecommender
+        init_params = None
 
-    model = NeuMF(
-        num_factors=config.num_factors,
-        layers=config.layers,
-        act_fn=config.act_fn,
-        reg=config.reg,
-        num_epochs=config.num_epochs,
-        batch_size=config.batch_size,
-        num_neg=config.num_neg,
-        lr=config.lr,
-        learner=config.learner, 
+    model = cornac.models.MF(
+        k=config.k,
         backend=config.backend,
+        optimizer=config.optimizer,
+        max_iter=config.max_iter,
+        learning_rate=config.learning_rate,
+        batch_size=config.batch_size,
+        lambda_reg=config.lambda_reg,
+        dropout=config.dropout,
+        use_bias=config.use_bias,
+        early_stop=config.early_stop,
+        num_threads=config.num_threads,
         trainable=config.trainable,
         verbose=config.verbose,
+        init_params=init_params,
         seed=config.seed
     )
 
