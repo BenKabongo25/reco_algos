@@ -1,118 +1,18 @@
+# Ben Kabongo
+# December 2024
+
 # MLP
 # Doc: https://cornac.readthedocs.io/en/stable/api_ref/models.html#module-cornac.models.ncf.recom_mlp
 
 
 import argparse
 import cornac
-import json
+
 import os
-import pandas as pd
-
-
-def main(config):
-
-    # Data
-    columns = [config.user_column, config.item_column, config.rating_column]
-    timestamp = config.timestamp and config.fmt.lower().endswith("t")
-    if timestamp:
-        columns.append(config.timestamp_column)
-
-    if config.data_path != "":
-        data = pd.read_csv(config.data_path)[columns]
-        data[config.rating_column] = data[config.rating_column].astype(float)
-
-        if config.verbose:
-            print("Data shape: ", data.shape)
-            print(data.head())
-
-        eval_method = cornac.eval_methods.RatioSplit(
-            data=data.to_numpy(), test_size=config.test_size, val_size=config.val_size, 
-            rating_threshold=config.rating_threshold, exclude_unknowns=config.exclude_unknowns, 
-            seed=config.seed, verbose=config.verbose
-        )
-
-    else:
-        train_data = pd.read_csv(config.train_path)[columns]
-        train_data[config.rating_column] = train_data[config.rating_column].astype(float)
-        test_data = pd.read_csv(config.test_path)[columns]
-        test_data[config.rating_column] = test_data[config.rating_column].astype(float)
-        val_data = None
-        if config.val_path != "":
-            val_data = pd.read_csv(config.val_path)[columns]
-            val_data[config.rating_column] = val_data[config.rating_column].astype(float)
-
-        if config.verbose:
-            print("Train shape: ", train_data.shape)
-            print(train_data.head())
-            print("Test shape: ", test_data.shape)
-            print(test_data.head())
-            if val_data is not None:
-                print("Val shape: ", val_data.shape)
-                print(val_data.head())
-            
-        eval_method = cornac.eval_methods.BaseMethod.from_splits(
-            train_data=train_data.to_numpy(), test_data=test_data.to_numpy(), 
-            val_data=None if val_data is None else val_data.to_numpy(),
-            fmt=config.fmt, 
-            rating_threshold=config.rating_threshold, exclude_unknowns=config.exclude_unknowns, 
-            seed=config.seed, verbose=config.verbose
-        )
-
-    # Model
-    model = cornac.models.MLP(
-        layers=config.layers,
-        act_fn=config.act_fn,
-        reg=config.reg,
-        num_epochs=config.num_epochs,
-        batch_size=config.batch_size,
-        num_neg=config.num_neg,
-        lr=config.lr,
-        learner=config.learner, 
-        backend=config.backend,
-        trainable=config.trainable,
-        verbose=config.verbose,
-        seed=config.seed
-    )
-
-    # Evaluation metrics
-    metrics = []
-    if config.rmse:
-        metrics.append(cornac.metrics.RMSE())
-    if config.mae:
-        metrics.append(cornac.metrics.MAE())
-    if config.precision:
-        metrics.append(cornac.metrics.Precision(k=config.ranking_k))
-    if config.recall:
-        metrics.append(cornac.metrics.Recall(k=config.ranking_k))
-    if config.f1:    
-        metrics.append(cornac.metrics.FMeasure(k=config.ranking_k))
-    if config.auc:
-        metrics.append(cornac.metrics.AUC())
-    if config.ndcg:
-        metrics.append(cornac.metrics.NDCG(k=config.ranking_k))
-    if config.hit:
-        metrics.append(cornac.metrics.HitRatio(k=config.ranking_k))
-    if config.map:
-        metrics.append(cornac.metrics.MAP())
-    if config.mrr:
-        metrics.append(cornac.metrics.MRR())
-
-    # Training
-    experiment = cornac.Experiment(
-        eval_method=eval_method, models=[model], metrics=metrics,
-        user_based=config.rating_user_based, show_validation=config.show_validation,
-        verbose=config.verbose
-    )
-    experiment.run()
-    test_results = experiment.result[0]
-    val_results = None
-    if config.val_path != "" or config.val_size > 0:
-        val_results = experiment.val_result[0]
-    
-    # Results
-    results = {"test": test_results.metric_avg_results, "val": val_results.metric_avg_results}
-    os.makedirs(config.save_dir, exist_ok=True)
-    json.dump(results, open(os.path.join(config.save_dir, f"{config.exp_name}.json"), "w"))
+import sys
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, parent_dir)
+from utils.common import main
 
 
 if __name__ == "__main__":
@@ -190,4 +90,21 @@ if __name__ == "__main__":
     args.add_argument("--save_dir", type=str, default="")
 
     config = args.parse_args()
-    main(config)
+
+    # Model
+    model = cornac.models.MLP(
+        layers=config.layers,
+        act_fn=config.act_fn,
+        reg=config.reg,
+        num_epochs=config.num_epochs,
+        batch_size=config.batch_size,
+        num_neg=config.num_neg,
+        lr=config.lr,
+        learner=config.learner, 
+        backend=config.backend,
+        trainable=config.trainable,
+        verbose=config.verbose,
+        seed=config.seed
+    )
+
+    main(config, models=[model])
