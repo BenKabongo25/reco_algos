@@ -8,6 +8,7 @@
 import argparse
 import cornac
 import json
+import numpy as np
 
 import os
 import sys
@@ -21,6 +22,7 @@ if __name__ == "__main__":
 
     # NARRE Cornac args
     args.add_argument("--embedding_size", type=int, default=100)
+    args.add_argument("--words_embedding_path", type=str, default="")
     args.add_argument("--id_embedding_size", type=int, default=32)
     args.add_argument("--n_factors", type=int, default=32)
     args.add_argument("--attention_size", type=int, default=16)
@@ -38,7 +40,6 @@ if __name__ == "__main__":
     args.set_defaults(user_based=False)
     args.add_argument("--trainable", action=argparse.BooleanOptionalAction)
     args.set_defaults(trainable=True)
-    args.add_argument("--init_params_file", type=str, default="")
     args.add_argument("--seed", type=int, default=None)
 
     # Data args
@@ -105,12 +106,13 @@ if __name__ == "__main__":
     config = args.parse_args()
 
     # Model
-    if not config.trainable:
-        if config.init_params_file == "":
-            raise ValueError("init_params_file must be provided when trainable=False")
-        init_params = json.load(open(config.init_params_file, "r"))
-    else:
-        init_params = None
+    pretrained_word_embeddings = {}
+    with open(config.words_embedding_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            parts = line.strip().split()
+            word = parts[0]
+            vector = np.array(parts[1:], dtype=float)
+            pretrained_word_embeddings[word] = vector
 
     model = cornac.models.NARRE(
         embedding_size=config.embedding_size,
@@ -128,7 +130,7 @@ if __name__ == "__main__":
         learning_rate=config.learning_rate,
         model_selection=config.model_selection,
         trainable=config.trainable,
-        init_params=init_params,
+        init_params={"pretrained_word_embeddings": pretrained_word_embeddings},
         seed=config.seed
     )
 
