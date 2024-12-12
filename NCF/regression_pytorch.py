@@ -310,7 +310,7 @@ class NCFBase(Recommender):
         if self.backend == "tensorflow":
             self.saver.save(self.sess, model_file.replace(".pkl", ".cpt"))
         elif self.backend == "pytorch":
-            torch.save(self.model.state_dict(), model_file.replace(".pkl", ".cpt"))
+            torch.save(self.model.state_dict(), model_file.replace(".pkl", ".pth"))
 
         return model_file
 
@@ -324,8 +324,7 @@ class NCFBase(Recommender):
             model._build_graph()
             model.saver.restore(model.sess, model.load_from.replace(".pkl", ".cpt"))
         elif model.backend == "pytorch":
-            # TODO: implement model loading for PyTorch
-            raise NotImplementedError()
+            model.model.load_state_dict(torch.load(model.load_from.replace(".pkl", ".pth")))
 
         return model
 

@@ -67,6 +67,99 @@ def get_eval_method(config):
     return eval_method
 
 
+def get_review_eval_method(config):
+    columns = [config.user_column, config.item_column, config.rating_column, config.review_column]
+
+    timestamp = config.timestamp and config.fmt.lower().endswith("t")
+    if timestamp:
+        columns.append(config.timestamp_column)
+
+    already_split = False
+    if config.data_path != "":
+        data = pd.read_csv(config.data_path)[columns]
+        data[config.rating_column] = data[config.rating_column].astype(float)
+
+        if config.verbose:
+            print("Data shape: ", data.shape)
+            print(data.head())
+
+    else:
+        already_split = True
+
+        train_data = pd.read_csv(config.train_path)[columns]
+        train_data[config.rating_column] = train_data[config.rating_column].astype(float)
+        test_data = pd.read_csv(config.test_path)[columns]
+        test_data[config.rating_column] = test_data[config.rating_column].astype(float)
+        data = pd.concat([train_data, test_data])
+        val_data = None
+        if config.val_path != "":
+            val_data = pd.read_csv(config.val_path)[columns]
+            val_data[config.rating_column] = val_data[config.rating_column].astype(float)
+            data = pd.concat([data, val_data])
+
+        if config.verbose:
+            print("Train shape: ", train_data.shape)
+            print(train_data.head())
+            print("Test shape: ", test_data.shape)
+            print(test_data.head())
+            if val_data is not None:
+                print("Val shape: ", val_data.shape)
+                print(val_data.head())
+    
+    u_map = {u: i for i, u in enumerate(data[config.user_column].unique())}
+    i_map = {i: j for j, i in enumerate(data[config.item_column].unique())}
+
+    reviews = data[[config.user_column, config.item_column, config.review_column]]
+    review_modality = cornac.data.ReviewModality(
+        data=reviews.to_numpy(),
+        tokenizer=cornac.data.text.BaseTokenizer(stop_words="english"),
+        max_vocab=getattr(config, "max_vocab", 10_000),
+        min_doc_freq=getattr(config, "min_doc_freq", 1),
+        max_doc_freq=getattr(config, "max_doc_freq", 1.0),
+        tfidf_params={
+            "binary": getattr(config, "tfidf_binary", False),
+            "norm": getattr(config, "tfidf_norm", "l2"),
+            "use_idf": getattr(config, "tfidf_use_idf", True),
+            "smooth_idf": getattr(config, "tfidf_smooth_idf", True),
+            "sublinear_tf": getattr(config, "tfidf_sublinear_tf", False)
+        }
+    )
+
+    columns = [config.user_column, config.item_column, config.rating_column]
+    if timestamp:
+        columns.append(config.timestamp_column)
+
+    if already_split:
+        data = data[columns]
+
+        eval_method = cornac.eval_methods.RatioSplit(
+            data=data.to_numpy(), test_size=config.test_size, val_size=config.val_size, 
+            review_text=review_modality,
+            global_uid_map=u_map, global_iid_map=i_map,
+            fmt=config.fmt, rating_threshold=config.rating_threshold, 
+            exclude_unknowns=config.exclude_unknowns, 
+            seed=config.seed, verbose=config.verbose
+        )
+
+    else:
+        train_data = train_data[columns]
+        test_data = test_data[columns]
+        if val_data is not None:
+            val_data = val_data[columns]
+
+        eval_method = cornac.eval_methods.BaseMethod.from_splits(
+            train_data=train_data.to_numpy(), test_data=test_data.to_numpy(), 
+            val_data=None if val_data is None else val_data.to_numpy(),
+            review_text=review_modality,
+            global_uid_map=u_map, global_iid_map=i_map,
+            fmt=config.fmt, rating_threshold=config.rating_threshold, 
+            exclude_unknowns=config.exclude_unknowns, 
+            seed=config.seed, verbose=config.verbose
+        )
+
+    return eval_method
+
+
 def get_metrics(config):
     metrics = []
     if config.rmse:
@@ -93,7 +186,10 @@ def get_metrics(config):
 
 
 def main(config, models):
-    eval_method = get_eval_method(config)
+    if getattr(config, "review_modality", False):
+        eval_method = get_review_eval_method(config)
+    else:
+        eval_method = get_eval_method(config)
     metrics = get_metrics(config)
 
     experiment = cornac.Experiment(
