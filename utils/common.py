@@ -99,7 +99,7 @@ def main(config, models):
     experiment = cornac.Experiment(
         eval_method=eval_method, models=models, metrics=metrics,
         user_based=config.rating_user_based, show_validation=config.show_validation,
-        verbose=config.verbose
+        verbose=config.verbose, save_dir=config.save_dir
     )
     experiment.run()
     test_results = experiment.result
