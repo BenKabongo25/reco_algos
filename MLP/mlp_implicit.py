@@ -1,7 +1,7 @@
 # Ben Kabongo
 # December 2024
 
-# MLP
+# MLP for implicit feedback
 # Doc: https://cornac.readthedocs.io/en/stable/api_ref/models.html#module-cornac.models.ncf.recom_mlp
 
 
@@ -12,7 +12,7 @@ import os
 import sys
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, parent_dir)
-from utils.common import main
+from utils.cornac_common import main
 
 
 if __name__ == "__main__":
@@ -51,8 +51,6 @@ if __name__ == "__main__":
     args.add_argument("--timestamp", action=argparse.BooleanOptionalAction)
     args.set_defaults(timestamp=False)
 
-    args.add_argument("--binary", action=argparse.BooleanOptionalAction)
-    args.set_defaults(binary=False)
     args.add_argument("--rating_threshold", type=float, default=4.0)
     args.add_argument("--exclude_unknowns", action=argparse.BooleanOptionalAction)
     args.set_defaults(exclude_unknowns=False)
@@ -94,13 +92,7 @@ if __name__ == "__main__":
     config = args.parse_args()
 
     # Model
-    if config.binary:
-        MLP = cornac.models.MLP
-    else:
-        from NCF.regression_pytorch import MLPRecommender
-        MLP = MLPRecommender
-
-    model = MLP(
+    model = cornac.models.MLP(
         layers=config.layers,
         act_fn=config.act_fn,
         reg=config.reg,

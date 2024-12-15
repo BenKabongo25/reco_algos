@@ -1,0 +1,19 @@
+python3 mlp_regression.py \
+    --dataset_name TripAdvisor \
+    --data_path /home/b.kabongo/datasets/TripAdvisor/data.csv \
+    --train_size 0.8 \
+    --test_size 0.1 \
+    --val_size 0.1 \
+    --layers 256 64 16 \
+    --n_epochs 50 \
+    --batch_size 512 \
+    --lr 0.001 \
+    --seed 42 \
+    --user_column user_id \
+    --item_column item_id \
+    --rating_column rating \
+    --threshold_rating 4.0 \
+    --no-ranking_metrics_flag \
+    --exp_name MLP \
+    --verbose \
+    --save_dir /home/b.kabongo/exps/TripAdvisor/MLP/

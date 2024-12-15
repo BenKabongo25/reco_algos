@@ -1,4 +1,4 @@
-python3 mlp.py \
+python3 mlp_implicit.py \
     --data_path /home/b.kabongo/datasets/TripAdvisor/data.csv \
     --fmt UIR \
     --train_size 0.8 \

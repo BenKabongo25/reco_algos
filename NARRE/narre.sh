@@ -5,7 +5,7 @@ python3 narre.py \
     --train_size 0.8 \
     --test_size 0.1 \
     --val_size 0.1 \
-    --embedding_dim 100 \
+    --embedding_size 100 \
     --id_embedding_size 128 \
     --n_factors 128 \
     --attention_size 16 \
