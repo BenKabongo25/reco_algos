@@ -35,10 +35,10 @@ def rating_evaluation_pytorch(config: Any,
 
     results.update({'precision': precision.item(), 'recall': recall.item(), 'f1': f1.item()})
 
-    if not config.ranking_metrics_flag and users is None:
+    if not config.ranking_metrics_flag or users is None:
         return results
 
-    users = set(users)
+    users = list(set(users))
     
     ndcg_scores = []
     average_precisions = []
@@ -98,10 +98,10 @@ def rating_evaluation(config: Any,
 
     results.update({'precision': precision, 'recall': recall, 'f1': f1})
 
-    if not config.ranking_metrics_flag and users is None:
+    if not config.ranking_metrics_flag or users is None:
         return results
 
-    users = set(users)
+    users = list(set(users))
     
     ndcg_scores = []
     average_precisions = []

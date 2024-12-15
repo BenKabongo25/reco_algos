@@ -17,15 +17,8 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from typing import *
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, parent_dir)
-from utils.evaluation import rating_evaluation_pytorch
-
-
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+from functions import set_seed
+from evaluation import rating_evaluation_pytorch
 
 
 class RatingDataset(Dataset):
@@ -40,50 +33,10 @@ class RatingDataset(Dataset):
     
     def __getitem__(self, index) -> Any:
         row = self.ratings_df.iloc[index]
-        u = row[self.args.user_column]
-        i = row[self.args.item_column]
-        r = row[self.args.rating_column]
+        u = int(row[self.args.user_column])
+        i = int(row[self.args.item_column])
+        r = float(row[self.args.rating_column])
         return u, i, r
-
-
-class MLPRecommender(nn.Module):
-
-    def __init__(
-            self, 
-            n_users: int, 
-            n_items: int, 
-            layers: List[int]=[256, 64, 16],
-        ):
-        super().__init__()
-
-        self.n_users = n_users
-        self.n_items = n_items
-        self.embedding_dim = layers[0] // 2
-        self.layers = layers
-
-        self.user_embed = nn.Embedding(num_embeddings=self.n_users, embedding_dim=self.embedding_dim)
-        self.item_embed = nn.Embedding(num_embeddings=self.n_items, embedding_dim=self.embedding_dim)
-
-        hiddens = []
-        for i in range(len(layers) - 1):
-            hiddens.append(nn.Linear(layers[i], layers[i + 1]))
-            hiddens.append(nn.ReLU())
-        self.hiddens = nn.Sequential(*hiddens)
-        self.predict = nn.Linear(layers[-1], 1)
-
-    def forward(self, U_ids: torch.Tensor, I_ids: torch.Tensor) -> torch.Tensor:
-        user_embeddings = self.user_embed(U_ids)
-        item_embeddings = self.item_embed(I_ids)
-        embeddings = torch.cat([user_embeddings, item_embeddings], dim=1)
-        logits = self.hiddens(embeddings)
-        R = self.predict(logits)
-        return R
-    
-    def save(self, save_model_path: str):
-        torch.save(self.state_dict(), save_model_path)
-
-    def load(self, save_model_path: str):
-        self.load_state_dict(torch.load(save_model_path))
 
 
 def train(model, optimizer, dataloader, loss_fn, args):
@@ -94,7 +47,7 @@ def train(model, optimizer, dataloader, loss_fn, args):
         optimizer.zero_grad()
         U_ids = torch.LongTensor(U_ids).to(args.device)
         I_ids = torch.LongTensor(I_ids).to(args.device)
-        R = torch.tensor(R, dtype=torch.float32).to(args.device)
+        R = torch.tensor(R.clone().detach(), dtype=torch.float32).to(args.device)
         R_hat = model(U_ids, I_ids).squeeze()
         loss = loss_fn(R_hat, R)
         loss.backward()
@@ -177,7 +130,7 @@ def trainer(model, train_dataloader, val_dataloader, args):
     return results
 
 
-def main(args):
+def main(model_class, args):
     set_seed(args)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -198,10 +151,10 @@ def main(args):
             print("Data shape: ", data_df.shape)
             print(data_df.head())
         
-        train_df = data_df.sample(frac=args.train_size, seed=args.seed)
+        train_df = data_df.sample(frac=args.train_size, random_state=args.seed)
         test_val_df = data_df.drop(train_df.index)
         test_size = args.test_size / (args.test_size + args.val_size)
-        test_df = test_val_df.sample(frac=test_size, seed=args.seed)
+        test_df = test_val_df.sample(frac=test_size, random_state=args.seed)
         val_df = None
         if args.val_size > 0:
             val_df = test_val_df.drop(test_df.index)
@@ -241,7 +194,7 @@ def main(args):
         val_dataset = RatingDataset(val_df, args)
         val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
-    model = MLPRecommender(n_users=len(users_vocab), n_items=len(items_vocab), layers=args.layers)
+    model = model_class(args)
     model.to(args.device)
     if args.save_model_path != "":
         model.load(args.save_model_path)
@@ -252,62 +205,21 @@ def main(args):
     results = trainer(model, train_dataloader, val_dataloader, args)
     with open(args.save_res_path, "w") as res_file:
         json.dump(results, res_file)
+    
+    os.makedirs(os.path.join(args.save_dir, args.exp_name), exist_ok=True)
 
     test_infos = eval(model, test_dataloader, nn.MSELoss(), args)
     results["test"] = test_infos
     with open(args.save_res_path, "w") as res_file:
         json.dump(results, res_file)
 
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(results["train"]["loss"], label="train")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.savefig(os.path.join(args.save_dir, args.exp_name, "loss.png"))
-
     for metric in results["val"]:
         plt.figure(figsize=(10, 6))
         plt.plot(results["val"][metric], label="val")
+        if metric == "loss":
+            plt.plot(results["train"][metric], label="train")
         plt.xlabel("Epochs")
         plt.ylabel(metric)
         plt.legend()
         plt.savefig(os.path.join(args.save_dir, args.exp_name, metric.lower() + ".png"))
 
-  
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--dataset_name", type=str, default="RateBeer")
-    parser.add_argument("--data_path", type=str, default="")
-    parser.add_argument("--train_size", type=float, default=0.8)
-    parser.add_argument("--test_size", type=float, default=0.1)
-    parser.add_argument("--val_size", type=float, default=0.1)
-    parser.add_argument("--train_path", type=str, default="")
-    parser.add_argument("--test_path", type=str, default="")
-    parser.add_argument("--val_path", type=str, default="")
-    
-    parser.add_argument("--layers", type=int, nargs="+", default=[256, 64, 16])
-    parser.add_argument("--n_epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=512)
-    parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--threshold_rating", type=float, default=4.0)
-    parser.add_argument("--ranking_metrics_flag", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(ranking_metrics_flag=False)
-
-    parser.add_argument("--save_dir", type=str, default="")
-    parser.add_argument("--save_model_path", type=str, default="")
-    parser.add_argument("--exp_name", type=str, default="MLP")
-
-    parser.add_argument("--user_column", type=str, default="user_id")
-    parser.add_argument("--item_column", type=str, default="item_id")
-    parser.add_argument("--rating_column", type=str, default="rating")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--eval_every", type=int, default=1)
-    parser.add_argument("--verbose", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(verbose=True)
-
-    args = parser.parse_args()
-    main(args)

@@ -1,11 +1,10 @@
-python3 ncf.py \
+python3 mlp.py \
     --dataset_name TripAdvisor \
     --data_path /home/b.kabongo/datasets/TripAdvisor/data.csv \
     --train_size 0.8 \
     --test_size 0.1 \
     --val_size 0.1 \
-    --n_factors 32 \
-    --layers 256 128 64 32 \
+    --layers 256 64 16 \
     --n_epochs 50 \
     --batch_size 512 \
     --lr 0.001 \
@@ -15,6 +14,6 @@ python3 ncf.py \
     --rating_column rating \
     --threshold_rating 4.0 \
     --no-ranking_metrics_flag \
-    --exp_name NCF \
+    --exp_name MLP \
     --verbose \
-    --save_dir /home/b.kabongo/exps/TripAdvisor/NCF/
+    --save_dir /home/b.kabongo/exps/TripAdvisor/MLP/

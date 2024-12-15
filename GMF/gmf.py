@@ -1,7 +1,7 @@
 # Ben Kabongo
 # December 2024
 
-# NeuMF/NCF
+# GMF
 
 import argparse
 import os
@@ -13,27 +13,29 @@ from typing import *
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, parent_dir)
 from utils.uir_common import main
-from GMF.gmf import GMF
-from MLP.mlp import MLP
 
 
-class NCF(nn.Module):
-    
+class GMF(nn.Module):
+
     def __init__(self, config):
         super().__init__()
-        self.gmf = GMF(config)
-        self.mlp = MLP(config)
-        self.predict = nn.Linear(config.n_factors + config.layers[-1], 1)
+        self.n_users = config.n_users
+        self.n_items = config.n_items
+        self.n_factors = config.n_factors
+        self.user_embed = nn.Embedding(self.n_users, self.n_factors)
+        self.item_embed = nn.Embedding(self.n_items, self.n_factors)
+        self.predict = nn.Linear(self.n_factors, 1)
+
+    def h(self, U_ids: torch.Tensor, I_ids: torch.Tensor):
+        user_embeddings = self.user_embed(U_ids)
+        item_embeddings = self.item_embed(I_ids)
+        return user_embeddings * item_embeddings
 
     def forward(self, U_ids, I_ids):
-        logits_gmf = self.gmf.h(U_ids, I_ids)
-        logits_mlp = self.mlp.h(U_ids, U_ids)
-        logits = torch.cat([logits_gmf, logits_mlp], dim=-1)
+        logits = self.h(U_ids, I_ids)
         R = self.predict(logits).view(-1)
         return R
     
-NeuMF = NCF
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -48,7 +50,6 @@ if __name__ == "__main__":
     parser.add_argument("--val_path", type=str, default="")
     
     parser.add_argument("--n_factors", type=int, default=32)
-    parser.add_argument("--layers", type=int, nargs="+", default=[256, 128, 64, 32])
     parser.add_argument("--n_epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=0.001)
@@ -58,7 +59,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--save_dir", type=str, default="../exps/TripAdvisor")
     parser.add_argument("--save_model_path", type=str, default="")
-    parser.add_argument("--exp_name", type=str, default="NCF")
+    parser.add_argument("--exp_name", type=str, default="GMF")
 
     parser.add_argument("--user_column", type=str, default="user_id")
     parser.add_argument("--item_column", type=str, default="item_id")
@@ -69,4 +70,5 @@ if __name__ == "__main__":
     parser.set_defaults(verbose=True)
 
     config = parser.parse_args()
-    main(NCF, config)
+    main(GMF, config)
+    

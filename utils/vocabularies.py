@@ -11,11 +11,11 @@ from typing import *
 
 class Vocabulary:
 
-    def __init__(self):
+    def __init__(self, default_add: bool=True):
         self._elements2ids = {}
         self._ids2elements = {}
         self.n_elements = 0
-        self.default_add = True
+        self.default_add = default_add
 
     def add_element(self, element: Union[int, float, str]):
         if element not in self._elements2ids:
@@ -57,6 +57,24 @@ class Vocabulary:
             self._elements2ids = data["elements2ids"]
             self._ids2elements = data["ids2elements"]
             self.n_elements = data["n_elements"]
+
+
+class WordVocabulary(Vocabulary):
+    PAD = 0
+    EOS = 1
+    SOS = 2
+    OOVID = 3
+
+    def __init__(self, default_add: bool=True, oov: bool=True):
+        super().__init__(default_add)
+        self.add_element("<PAD>")
+        self.add_element("<EOS>")
+        self.add_element("<SOS>")
+        if oov:
+            self.add_element("<OOV>")
+        self.oov = oov
+
+    
 
 
 def create_vocab_from_df(metadata_df: pd.DataFrame, element_column: str) -> Vocabulary:
