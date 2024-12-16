@@ -17,8 +17,8 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from typing import *
 
-from functions import set_seed
-from evaluation import rating_evaluation_pytorch
+from .functions import set_seed
+from .evaluation import rating_evaluation_pytorch
 
 
 class RatingDataset(Dataset):
@@ -174,6 +174,8 @@ def main(model_class, args):
 
     users_vocab = {u: i for i, u in enumerate(data_df[args.user_column].unique())}
     items_vocab = {i: j for j, i in enumerate(data_df[args.item_column].unique())}
+    args.n_users = len(users_vocab)
+    args.n_items = len(items_vocab)
 
     train_df[args.user_column] = train_df[args.user_column].apply(lambda u: users_vocab[u])
     train_df[args.item_column] = train_df[args.item_column].apply(lambda i: items_vocab[i])
