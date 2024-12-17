@@ -186,7 +186,6 @@ def trainer(model, config, optimizer, rating_criterion, train_dataloader, val_da
 
 def main(config):
     config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    config.device = torch.device('cpu')
     os.makedirs(config.save_dir, exist_ok=True)
     config.model_path = os.path.join(config.save_dir, 'model.pt')
     config.results_path = os.path.join(config.save_dir, 'results.json')
