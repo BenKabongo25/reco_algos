@@ -27,10 +27,16 @@ class NCF(nn.Module):
 
     def forward(self, U_ids, I_ids):
         logits_gmf = self.gmf.h(U_ids, I_ids)
-        logits_mlp = self.mlp.h(U_ids, U_ids)
+        logits_mlp = self.mlp.h(U_ids, I_ids)
         logits = torch.cat([logits_gmf, logits_mlp], dim=-1)
         R = self.predict(logits).view(-1)
         return R
+    
+    def save(self, save_model_path: str):
+        torch.save(self.state_dict(), save_model_path)
+
+    def load(self, save_model_path: str):
+        self.load_state_dict(torch.load(save_model_path))
     
 NeuMF = NCF
 

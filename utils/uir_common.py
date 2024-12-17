@@ -208,6 +208,7 @@ def main(model_class, args):
     with open(args.save_res_path, "w") as res_file:
         json.dump(results, res_file)
     
+    os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, args.exp_name), exist_ok=True)
 
     test_infos = eval(model, test_dataloader, nn.MSELoss(), args)

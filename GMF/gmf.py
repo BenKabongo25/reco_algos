@@ -36,6 +36,12 @@ class GMF(nn.Module):
         R = self.predict(logits).view(-1)
         return R
     
+    def save(self, save_model_path: str):
+        torch.save(self.state_dict(), save_model_path)
+
+    def load(self, save_model_path: str):
+        self.load_state_dict(torch.load(save_model_path))
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -107,7 +107,6 @@ def get_review_eval_method(config):
                 print(val_data.head())
     
     u_map = {u: i for i, u in enumerate(data[config.user_column].unique())}
-
     i_map = {i: j for j, i in enumerate(data[config.item_column].unique())}
 
     reviews = data[[config.user_column, config.item_column, config.review_column]]
@@ -130,7 +129,7 @@ def get_review_eval_method(config):
     if timestamp:
         columns.append(config.timestamp_column)
 
-    if already_split:
+    if not already_split:
         data = data[columns]
 
         eval_method = cornac.eval_methods.RatioSplit(

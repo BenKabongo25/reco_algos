@@ -35,7 +35,7 @@ def rating_evaluation_pytorch(config: Any,
 
     results.update({'precision': precision.item(), 'recall': recall.item(), 'f1': f1.item()})
 
-    if not config.ranking_metrics_flag or users is None:
+    if not getattr(config, 'ranking_metrics_flag', False) or users is None:
         return results
 
     users = list(set(users))
@@ -98,7 +98,7 @@ def rating_evaluation(config: Any,
 
     results.update({'precision': precision, 'recall': recall, 'f1': f1})
 
-    if not config.ranking_metrics_flag or users is None:
+    if not getattr(config, 'ranking_metrics_flag', False) or users is None:
         return results
 
     users = list(set(users))
@@ -142,7 +142,7 @@ def review_evaluation(config, predictions: List[str], references: List[str]) -> 
     references_list = [[ref] for ref in references]
 
     bleu_metric = evaluate.load("bleu")
-    bleu_results = bleu_metric.compute(predictions=predictions, references=references_list)
+    bleu_results = bleu_metric.compute(predictions=predictions, references=references_list, )
     bleu_results["precision"] = np.mean(bleu_results["precisions"])
 
     bertscore_metric = evaluate.load("bertscore")
