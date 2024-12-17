@@ -28,20 +28,18 @@ from utils.evaluation import rating_evaluation_pytorch, review_evaluation
 from utils.text import postprocess_text
 
 
-
 def train(model, config, optimizer, rating_criterion, dataloader):
     model.train()
     text_loss = 0.
     rating_loss = 0.
-    total_sample = 0
 
     progress_bar = tqdm(enumerate(dataloader, 1), desc="Training", colour="green", total=len(dataloader))
     for batch_idx, batch in progress_bar:
-        user = batch['user_id'].to(config.device)
-        item = batch['item_id'].to(config.device)
-        rating = batch['rating'].to(config.device)
-        seq = batch['tokens'].to(config.device)
-        mask = batch['mask'].to(config.device)
+        user = torch.LongTensor(batch['user_id']).to(config.device)
+        item = torch.LongTensor(batch['item_id']).to(config.device)
+        rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
+        seq = torch.LongTensor(batch['tokens']).to(config.device)
+        mask = torch.LongTensor(batch['mask']).to(config.device)
         
         optimizer.zero_grad()
         outputs, rating_p = model(user, item, seq, mask)
@@ -54,21 +52,19 @@ def train(model, config, optimizer, rating_criterion, dataloader):
         batch_size = user.size(0)
         text_loss += batch_size * t_loss.item()
         rating_loss += batch_size * r_loss.item()
-        total_sample += batch_size
 
         if batch_idx % config.log_interval == 0 or batch_idx == len(dataloader):
-            cur_t_loss = text_loss / total_sample
-            cur_r_loss = rating_loss / total_sample
+            cur_t_loss = text_loss / len(dataloader)
+            cur_r_loss = rating_loss / len(dataloader)
             description = 'text ppl {:4.4f} | rating loss {:4.4f} | {:5d}/{:5d} batches'.format(
                 math.exp(cur_t_loss), cur_r_loss, batch_idx, len(dataloader))
             logging.info(description)
             progress_bar.set_description(description)
             text_loss = 0.
             rating_loss = 0.
-            total_sample = 0
 
-    text_loss /= total_sample
-    rating_loss /= total_sample
+    text_loss /= len(dataloader)
+    rating_loss /= len(dataloader)
     return {'text_loss': text_loss, 'rating_loss': rating_loss}
 
 
@@ -76,16 +72,15 @@ def evaluate(model, config, rating_criterion, dataloader):
     model.eval()
     text_loss = 0.
     rating_loss = 0.
-    total_sample = 0
 
     progress_bar = tqdm(enumerate(dataloader, 1), desc="Eval", colour="green", total=len(dataloader))
     with torch.no_grad():
         for batch_idx, batch in progress_bar:
-            user = batch['user_id'].to(config.device)
-            item = batch['item_id'].to(config.device)
-            rating = batch['rating'].to(config.device)
-            seq = batch['tokens'].to(config.device)
-            mask = batch['mask'].to(config.device)
+            user = torch.LongTensor(batch['user_id']).to(config.device)
+            item = torch.LongTensor(batch['item_id']).to(config.device)
+            rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
+            seq = torch.LongTensor(batch['tokens']).to(config.device)
+            mask = torch.LongTensor(batch['mask']).to(config.device)
 
             outputs, rating_p = model(user, item, seq, mask)
             t_loss = outputs.loss
@@ -94,10 +89,9 @@ def evaluate(model, config, rating_criterion, dataloader):
             batch_size = user.size(0)
             text_loss += batch_size * t_loss.item()
             rating_loss += batch_size * r_loss.item()
-            total_sample += batch_size
     
-    text_loss /= total_sample
-    rating_loss /= total_sample
+    text_loss /= len(dataloader)
+    rating_loss /= len(dataloader)
     return {'text_loss': text_loss, 'rating_loss': rating_loss}
 
 
@@ -109,7 +103,7 @@ def ids2tokens(ids, tokenizer, eos):
         if token == eos:
             break
         tokens.append(token)
-    return tokens
+    return " ".join(tokens)
 
 
 def generate_and_evaluate(model, config, tokenizer, dataloader):
@@ -123,10 +117,10 @@ def generate_and_evaluate(model, config, tokenizer, dataloader):
     progress_bar = tqdm(enumerate(dataloader, 1), desc="Generate", colour="green", total=len(dataloader))
     with torch.no_grad():
         for batch_idx, batch in progress_bar:
-            user = batch['user_id'].to(config.device)
-            item = batch['item_id'].to(config.device)
-            rating = batch['rating'].to(config.device)
-            seq = batch['tokens'].to(config.device)
+            user = torch.LongTensor(batch['user_id']).to(config.device)
+            item = torch.LongTensor(batch['item_id']).to(config.device)
+            rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
+            seq = torch.LongTensor(batch['tokens']).to(config.device)
             review = batch['review']
 
             reference_texts.extend(review)
@@ -145,12 +139,11 @@ def generate_and_evaluate(model, config, tokenizer, dataloader):
                 token = torch.argmax(word_prob, dim=1, keepdim=True)  # (batch_size, 1), pick the one with the largest probability
                 text = torch.cat([text, token], 1)  # (batch_size, len++)
             ids = text[:, 1:].tolist()  # remove bos, (batch_size, seq_len)
-            review_p = ids2tokens(ids, tokenizer, config.eos)
+            review_p = [ids2tokens(rids, tokenizer, config.eos) for rids in ids]
             predict_texts.extend(review_p)
 
     ratings_scores = rating_evaluation_pytorch(config, predictions=predict_ratings, references=reference_ratings)
     review_scores = review_evaluation(config, predictions=predict_texts, references=reference_texts)
-
     return {'text': review_scores, 'rating': ratings_scores}
 
 
@@ -193,6 +186,7 @@ def trainer(model, config, optimizer, rating_criterion, train_dataloader, val_da
 
 def main(config):
     config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    config.device = torch.device('cpu')
     os.makedirs(config.save_dir, exist_ok=True)
     config.model_path = os.path.join(config.save_dir, 'model.pt')
     config.results_path = os.path.join(config.save_dir, 'results.json')
@@ -227,10 +221,10 @@ def main(config):
     train_size, test_size, val_size = len(train_df), len(test_df), len(val_df) if val_df is not None else 0
     logging.info("Data shape: {}".format(data_df.shape))
     logging.info("Train size: {}, Test size: {}, Validation size: {}".format(train_size, test_size, val_size))
-    logging.info({}.format(data_df.head()))
+    logging.info("{}".format(data_df.head()))
 
-    users_vocab = {u: i for i, u in enumerate(data_df['user_id'].unique())}
-    items_vocab = {i: j for j, i in enumerate(data_df['item_id'].unique())}
+    users_vocab = {u: uid for uid, u in enumerate(data_df['user_id'].unique())}
+    items_vocab = {i: iid for iid, i in enumerate(data_df['item_id'].unique())}
     config.n_users = len(users_vocab)
     config.n_items = len(items_vocab)
 
@@ -308,6 +302,15 @@ if __name__ == '__main__':
                         help='report interval')
     parser.add_argument('--save_dir', type=str, default='./PEPLER/',
                         help='directory to save the final model')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='random seed')
+    
+    parser.add_argument('--threshold_rating', type=float, default=4.0,
+                        help='threshold for rating')
+    parser.add_argument('--ranking_metrics_flag', action=argparse.BooleanOptionalAction, default=True,
+                        help='whether to compute ranking metrics')
+    parser.add_argument('--lang', type=str, default='en',
+                        help='language')
 
     parser.add_argument('--endure_times', type=int, default=5,
                         help='the maximum endure times of loss increasing on validation')
@@ -319,6 +322,15 @@ if __name__ == '__main__':
                         help='otherwise MLP')
     parser.add_argument('--review_length', type=int, default=128,
                         help='number of words to generate for each sample')
+    
+    parser.add_argument("--truncate_flag", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(truncate_flag=True)
+    parser.add_argument("--lower_flag", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(lower_flag=True)
+    parser.add_argument("--delete_balise_flag", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(delete_balise_flag=True)
+    parser.add_argument("--delete_non_ascii_flag", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(delete_non_ascii_flag=True)
     
     config = parser.parse_args()
     main(config)

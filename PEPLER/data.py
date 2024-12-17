@@ -33,7 +33,7 @@ class RatingReviewDataset(Dataset):
                 self.reviews[index] = review
 
                 inputs = self.tokenizer(
-                    f"{self.config.bos} {review} {self.config.sos}",
+                    f"{self.config.bos} {review} {self.config.eos}",
                     max_length=self.config.review_length,
                     truncation=True, 
                     padding="max_length",
