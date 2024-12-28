@@ -28,6 +28,11 @@ from utils.evaluation import rating_evaluation_pytorch, review_evaluation
 from utils.text import postprocess_text
 
 
+def empty_cache():
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+
+
 def train(model, config, optimizer, rating_criterion, dataloader):
     model.train()
     text_loss = 0.
@@ -35,6 +40,7 @@ def train(model, config, optimizer, rating_criterion, dataloader):
 
     progress_bar = tqdm(enumerate(dataloader, 1), desc="Training", colour="green", total=len(dataloader))
     for batch_idx, batch in progress_bar:
+        empty_cache()
         user = torch.LongTensor(batch['user_id']).to(config.device)
         item = torch.LongTensor(batch['item_id']).to(config.device)
         rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
@@ -76,6 +82,7 @@ def evaluate(model, config, rating_criterion, dataloader):
     progress_bar = tqdm(enumerate(dataloader, 1), desc="Eval", colour="green", total=len(dataloader))
     with torch.no_grad():
         for batch_idx, batch in progress_bar:
+            empty_cache()
             user = torch.LongTensor(batch['user_id']).to(config.device)
             item = torch.LongTensor(batch['item_id']).to(config.device)
             rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
@@ -117,6 +124,7 @@ def generate_and_evaluate(model, config, tokenizer, dataloader):
     progress_bar = tqdm(enumerate(dataloader, 1), desc="Generate", colour="green", total=len(dataloader))
     with torch.no_grad():
         for batch_idx, batch in progress_bar:
+            empty_cache()
             user = torch.LongTensor(batch['user_id']).to(config.device)
             item = torch.LongTensor(batch['item_id']).to(config.device)
             rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
