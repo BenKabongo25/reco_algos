@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 from atm import process_data, gibbs_sampling_atm
 from data import RatingsDataset
-from module import ALFM
+from module import A3NCF
 
 
 
@@ -37,27 +37,25 @@ def rating_evaluation_pytorch(config: Any,
     return {'rmse': rmse.item(), 'mae': mae.item()}
 
 
-def train(model: ALFM, config, optimizer, dataloader):
+def train(model: A3NCF, config, optimizer, dataloader, loss_fn):
     model.train()
     train_loss = .0
 
-    for batch in tqdm(dataloader, f"Training ALFM", colour="blue", total=len(dataloader)):
+    for batch in tqdm(dataloader, f"Training A3NCF", colour="blue", total=len(dataloader)):
         U_ids = torch.LongTensor(batch["user_id"]).to(config.device) # (batch_size,)
         I_ids = torch.LongTensor(batch["item_id"]).to(config.device) # (batch_size,)
         R = torch.tensor(batch["overall_rating"], dtype=torch.float32).to(config.device) # (batch_size,)
-
-        output = model(U_ids, I_ids, R) # R is not used in the forward pass
-        loss = output["loss"]
+        R_hat = model(U_ids, I_ids)
+        loss = loss_fn(R_hat, R)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
         train_loss += loss.item()
 
     return train_loss / len(dataloader)
     
 
-def eval(model: ALFM, config, dataloader):
+def eval(model: A3NCF, config, dataloader):
     model.eval()
 
     references = {"overall_rating": []}
@@ -67,9 +65,7 @@ def eval(model: ALFM, config, dataloader):
         U_ids = torch.LongTensor(batch["user_id"]).to(config.device) # (batch_size,)
         I_ids = torch.LongTensor(batch["item_id"]).to(config.device) # (batch_size,)
         R = torch.tensor(batch["overall_rating"], dtype=torch.float32).to(config.device) # (batch_size,)
-
-        output = model(U_ids, I_ids, R) # R is not used in the forward pass
-        R_hat = output["R_hat"]
+        R_hat = model(U_ids, I_ids)
 
         references["overall_rating"].extend(R.cpu().detach().tolist())
         predictions["overall_rating"].extend(R_hat.cpu().detach().tolist())
@@ -102,8 +98,9 @@ def write_eval(writer, scores, phase, epoch):
             writer.add_scalar(f"{element}/{metric}/{phase}", scores[element][metric], epoch)
 
 
-def trainer(model: ALFM, config, train_dataloader, eval_dataloader):
+def trainer(model: A3NCF, config, train_dataloader, eval_dataloader):
     optimizer = torch.optim.SGD(model.parameters(), lr=config.lr)
+    loss_fn = torch.nn.MSELoss()
 
     train_infos = {"loss": []}
     eval_infos = {}
@@ -111,7 +108,7 @@ def trainer(model: ALFM, config, train_dataloader, eval_dataloader):
     best_rating = float("inf")
     progress_bar = tqdm(range(1, 1 + config.n_epochs), "Training", colour="blue")
     for epoch in progress_bar:
-        train_loss = train(model, config, optimizer=optimizer, dataloader=train_dataloader)
+        train_loss = train(model, config, optimizer, train_dataloader, loss_fn)
         train_infos["loss"].append(train_loss)
         config.writer.add_scalar("loss/train", train_loss, epoch)
 
@@ -162,7 +159,7 @@ def run(config):
     config.res_file_path = os.path.join(config.save_dir, "res.json")
     config.save_model_path = os.path.join(config.save_dir, "model.pth")
 
-    logger = logging.getLogger("ALFM" + config.dataset_name)
+    logger = logging.getLogger("A3NCF" + config.dataset_name)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler = logging.FileHandler(config.log_file_path)
@@ -216,25 +213,20 @@ def run(config):
 
     if config.model_params_path == "":
         data, words_vocab = process_data(config, train_df)
-        Beta_w = np.ones(config.vocabulary_size)  
-        Gamma_u = np.ones(config.n_aspects)
-        Gamma_i = np.ones(config.n_aspects)
-        Alpha_u = np.ones(config.n_topics)
-        Alpha_i = np.ones(config.n_topics)
+        Beta_w = np.ones(config.vocabulary_size)
+        Alpha_u = np.ones(config.n_factors)
+        Gamma_i = np.ones(config.n_factors)
         eta = (1, 1)
 
-        model = ALFM.from_gibbs_sampling_atm(
-            config, data, words_vocab, Beta_w, Gamma_u, Gamma_i, Alpha_u, Alpha_i, eta
+        model = A3NCF.from_gibbs_sampling_atm(
+            config, data, words_vocab, Beta_w, Alpha_u, Gamma_i, eta
         )
     else:
         import pickle
         params = pickle.load(open(config.model_params_path, "rb"))
         Theta_u = torch.tensor(params["Theta_u"], dtype=torch.float32)
         Psi_i = torch.tensor(params["Psi_i"], dtype=torch.float32)
-        Pi_u = torch.tensor(params["Pi_u"], dtype=torch.float32)
-        Lambda_u = torch.tensor(params["Lambda_u"], dtype=torch.float32)
-        Lambda_i = torch.tensor(params["Lambda_i"], dtype=torch.float32)
-        model = ALFM(config, Theta_u, Psi_i, Pi_u, Lambda_u, Lambda_i)
+        model = A3NCF(config, Theta_u, Psi_i)
 
     model.to(config.device)
     if config.load_model:
@@ -250,7 +242,7 @@ def run(config):
 
     if config.verbose:
         log = "\n" + (
-            f"Model name: ALFM\n" +
+            f"Model name: A3NCF\n" +
             f"Dataset: {config.dataset_name}\n" +
             f"#Aspects: {config.n_aspects}\n" +
             f"#Users: {config.n_users}\n" +
@@ -293,8 +285,6 @@ if __name__ == "__main__":
     parser.add_argument("--val_path", type=str, default="")
 
     parser.add_argument("--n_factors", type=int, default=128)
-    parser.add_argument("--n_topics", type=int, default=10)
-    parser.add_argument("--n_aspects", type=int, default=6)
     parser.add_argument("--vocabulary_size", type=int, default=10_000)
     parser.add_argument("--gibbs_sampling_iterations", type=int, default=1000)
 
@@ -305,11 +295,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
-
-    parser.add_argument("--lambda_u", type=float, default=1e-2)
-    parser.add_argument("--lambda_i", type=float, default=1e-2)
-    parser.add_argument("--lambda_a", type=float, default=1e-2)
-    parser.add_argument("--lambda_b", type=float, default=1e-2)
 
     parser.add_argument("--n_epochs", type=int, default=50)
     parser.add_argument("--rating_metric", type=str, default="rmse")

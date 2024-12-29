@@ -23,6 +23,7 @@ Each algorithm is implemented as a standalone module, ensuring clarity and ease 
 
 The repository currently includes implementations of the following algorithms:
 
+- **A3NCF** (2018): An Adaptive Aspect Attention Model for Rating Prediction [Paper](https://www.ijcai.org/proceedings/2018/0521.pdf)
 - **ALFM** (2018): Aspect-Aware Latent Factor Model [Paper](https://dl.acm.org/doi/pdf/10.1145/3178876.3186145)
 - **AMF** (2018): Explainable recommendation with fusion of aspect information [Paper](https://yneversky.github.io/Papers/Hou2019_Article_ExplainableRecommendationWithF.pdf)
 - **GMF** (2017): Generalized Matrix Factorization [Paper](https://arxiv.org/pdf/1708.05031).

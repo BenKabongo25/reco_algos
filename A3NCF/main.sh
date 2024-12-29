@@ -1,0 +1,15 @@
+python3 main.py \
+    --dataset_name Hotels \
+    --data_path /home/b.kabongo/aspects_datasets/Hotels/data.csv \
+    --train_size 0.8 \
+    --test_size 0.1 \
+    --val_size 0.1 \
+    --n_factors 128 \
+    --vocabulary_size 10000 \
+    --gibbs_sampling_iterations 1000 \
+    --n_epochs 50 \
+    --batch_size 512 \
+    --lr 0.001 \
+    --seed 42 \
+    --verbose \
+    --save_dir /home/b.kabongo/exps/Hotels/A3NCF/ \
