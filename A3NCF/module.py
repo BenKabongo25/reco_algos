@@ -8,7 +8,7 @@
 import torch
 import torch.nn as nn
 
-from atm import gibbs_sampling_atm
+from topic_model import gibbs_sampling_topic_model
 
 
 class A3NCF(nn.Module):
@@ -28,12 +28,14 @@ class A3NCF(nn.Module):
         self.fusion_layer = nn.Sequential(
             nn.Linear(config.n_factors * 2, config.n_factors),
             nn.ReLU(),
+            nn.Dropout(config.dropout),
             nn.Linear(config.n_factors, config.n_factors)
         )
 
         self.attention_layer = nn.Sequential(
             nn.Linear(config.n_factors * 4, config.n_factors),
             nn.ReLU(),
+            nn.Dropout(config.dropout),
             nn.Linear(config.n_factors, config.n_factors, bias=False),
             nn.Softmax(dim=1)
         )
@@ -41,14 +43,16 @@ class A3NCF(nn.Module):
         self.rating_prediction = nn.Sequential(
             nn.Linear(config.n_factors, config.n_factors),
             nn.ReLU(),
+            nn.Dropout(config.dropout),
             nn.Linear(config.n_factors, config.n_factors),
             nn.ReLU(),
+            nn.Dropout(config.dropout),
             nn.Linear(config.n_factors, 1)
         )
     
     @classmethod
-    def from_gibbs_sampling_atm(cls, config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
-        res = gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta)
+    def from_gibbs_sampling_topic_model(cls, config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
+        res = gibbs_sampling_topic_model(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta)
         return cls(
             config, 
             torch.tensor(res['Theta_u'], dtype=torch.float32),

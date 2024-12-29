@@ -16,7 +16,7 @@ from tqdm import tqdm
 from typing import Any, Dict, List
 
 
-from atm import process_data, gibbs_sampling_atm
+from topic_model import process_data, gibbs_sampling_topic_model
 from data import RatingsDataset
 from module import A3NCF
 
@@ -217,8 +217,7 @@ def run(config):
         Alpha_u = np.ones(config.n_factors)
         Gamma_i = np.ones(config.n_factors)
         eta = (1, 1)
-
-        model = A3NCF.from_gibbs_sampling_atm(
+        model = A3NCF.from_gibbs_sampling_topic_model(
             config, data, words_vocab, Beta_w, Alpha_u, Gamma_i, eta
         )
     else:
@@ -244,7 +243,7 @@ def run(config):
         log = "\n" + (
             f"Model name: A3NCF\n" +
             f"Dataset: {config.dataset_name}\n" +
-            f"#Aspects: {config.n_aspects}\n" +
+            f"#Factors: {config.n_factors}\n" +
             f"#Users: {config.n_users}\n" +
             f"#Items: {config.n_items}\n" +
             f"Device: {device}\n\n" +
@@ -285,6 +284,7 @@ if __name__ == "__main__":
     parser.add_argument("--val_path", type=str, default="")
 
     parser.add_argument("--n_factors", type=int, default=128)
+    parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--vocabulary_size", type=int, default=10_000)
     parser.add_argument("--gibbs_sampling_iterations", type=int, default=1000)
 

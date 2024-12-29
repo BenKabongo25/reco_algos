@@ -40,7 +40,7 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Gamma_u, Gamma_i, Alpha
     Pi_u = beta.rvs(eta[0], eta[1], size=config.n_users)  # (n_users,) Bernoulli parameter for users
 
     # Gibbs Sampling
-    old_params = [Phi.copy(), Lambda_u.copy(), Lambda_i.copy(), Theta_u.copy(), Psi_i.copy()]
+    old_params = [Phi.copy(), Lambda_u.copy(), Lambda_i.copy(), Theta_u.copy(), Psi_i.copy(), Pi_u.copy()]
     for _ in tqdm(range(config.gibbs_sampling_iterations), desc="Gibbs Sampling", 
                   total=config.gibbs_sampling_iterations, colour="cyan"):
         
@@ -69,7 +69,7 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Gamma_u, Gamma_i, Alpha
                 
                 if len(sampled_sentence) == 0:
                     continue
-                sampled_review.append((a_s, z_s, sampled_sentence))
+                sampled_review.append((y, a_s, z_s, sampled_sentence))
 
             if len(sampled_review) > 0:
                 sampled_reviews.append((u, i, sampled_review))
@@ -80,13 +80,19 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Gamma_u, Gamma_i, Alpha
         Lambda_i_counts = np.zeros_like(Lambda_i)
         Theta_u_counts = np.zeros_like(Theta_u)
         Psi_i_counts = np.zeros_like(Psi_i)
+        Pi_u0_counts = np.zeros_like(Pi_u)
+        Pi_u1_counts = np.zeros_like(Pi_u)
 
         for u, i, review in sampled_reviews:
-            for a_s, z_s, sentence in review:
+            for y, a_s, z_s, sentence in review:
                 Lambda_u_counts[u, a_s] += 1
                 Lambda_i_counts[i, a_s] += 1
                 Theta_u_counts[u, a_s, z_s] += 1
                 Psi_i_counts[i, a_s, z_s] += 1
+                if y == 0:
+                    Pi_u0_counts[u] += 1
+                else:
+                    Pi_u1_counts[u] += 1
                 for w in sentence:
                     Phi_counts[z_s, w] += 1
 
@@ -96,8 +102,9 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Gamma_u, Gamma_i, Alpha
         Lambda_i = (Lambda_i_counts + Gamma_i) / (Lambda_i_counts.sum(axis=1, keepdims=True) + Gamma_i.sum())
         Theta_u = (Theta_u_counts + Alpha_u) / (Theta_u_counts.sum(axis=2, keepdims=True) + Alpha_u.sum())
         Psi_i = (Psi_i_counts + Alpha_i) / (Psi_i_counts.sum(axis=2, keepdims=True) + Alpha_i.sum())
+        Pi_u = (Pi_u0_counts + eta[0]) / (Pi_u0_counts + Pi_u1_counts + eta[0] + eta[1])
 
-        new_params = [Phi, Lambda_u, Lambda_i, Theta_u, Psi_i]
+        new_params = [Phi, Lambda_u, Lambda_i, Theta_u, Psi_i, Pi_u]
         if has_converged(old_params, new_params):
             print("Gibbs Sampling converged.")
             break

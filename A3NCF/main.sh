@@ -5,8 +5,9 @@ python3 main.py \
     --test_size 0.1 \
     --val_size 0.1 \
     --n_factors 128 \
+    --dropout 0.5 \
     --vocabulary_size 10000 \
-    --gibbs_sampling_iterations 1000 \
+    --gibbs_sampling_iterations 100 \
     --n_epochs 50 \
     --batch_size 512 \
     --lr 0.001 \

@@ -3,6 +3,8 @@
 
 import nltk
 import numpy as np
+import pickle
+import os
 import re
 
 from nltk.stem.snowball import EnglishStemmer
@@ -10,11 +12,11 @@ from scipy.stats import dirichlet, bernoulli, beta
 from tqdm import tqdm
 
 
-def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
-    """ Gibbs Sampling for ATM parameter estimation.
+def gibbs_sampling_topic_model(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
+    """ Gibbs Sampling for topic model parameter estimation.
 
     Parameters:
-    - config: Configuration object with n_topics, n_users, n_items, n_aspects, gibbs_sampling_iterations, etc.
+    - config: Configuration object with n_factors, n_users, n_items, n_aspects, gibbs_sampling_iterations, etc.
     - data_df: Data with user-item reviews.
     - vocabulary: Vocabulary of words.
     - Beta_w: Dirichlet parameters for topic-word distributions.
@@ -23,16 +25,16 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
     - eta: Beta priors for Bernoulli parameter.
 
     Returns:
-    - Updated ATM parameters.
+    - Updated topic model parameters.
     """
     
-    Phi = dirichlet.rvs(Beta_w, size=config.n_topics)  # (n_topics, vocab_size) Topic-word distributions
-    Theta_u = dirichlet.rvs(Alpha_u, size=config.n_users) # (n_users, n_topics) User topic distributions
-    Psi_i = dirichlet.rvs(Gamma_i, size=config.n_items) # (n_items, n_topics) Item topic distributions
+    Phi = dirichlet.rvs(Beta_w, size=config.n_factors)  # (n_factors, vocab_size) Topic-word distributions
+    Theta_u = dirichlet.rvs(Alpha_u, size=config.n_users) # (n_users, n_factors) User topic distributions
+    Psi_i = dirichlet.rvs(Gamma_i, size=config.n_items) # (n_items, n_factors) Item topic distributions
     Pi_u = beta.rvs(eta[0], eta[1], size=config.n_users)  # (n_users,) Bernoulli parameter for users
 
     # Gibbs Sampling
-    old_params = [Phi.copy(), Theta_u.copy(), Psi_i.copy()]
+    old_params = [Phi.copy(), Theta_u.copy(), Psi_i.copy(), Pi_u.copy()]
     for _ in tqdm(range(config.gibbs_sampling_iterations), desc="Gibbs Sampling", 
                   total=config.gibbs_sampling_iterations, colour="cyan"):
         
@@ -45,9 +47,9 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
                 y = bernoulli.rvs(Pi_u[u])
                     
                 if y == 0: # Based on user's preferences
-                    z_s = np.random.choice(np.arange(config.n_topics), p=Theta_u[u])
+                    z_s = np.random.choice(np.arange(config.n_factors), p=Theta_u[u])
                 else: # Based on item's characteristics
-                    z_s = np.random.choice(np.arange(config.n_topics), p=Psi_i[i])
+                    z_s = np.random.choice(np.arange(config.n_factors), p=Psi_i[i])
 
                 sampled_sentence = []
                 for word in sentence:
@@ -59,7 +61,7 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
                 
                 if len(sampled_sentence) == 0:
                     continue
-                sampled_review.append((z_s, sampled_sentence))
+                sampled_review.append((y, z_s, sampled_sentence))
 
             if len(sampled_review) > 0:
                 sampled_reviews.append((u, i, sampled_review))
@@ -68,11 +70,17 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
         Phi_counts = np.zeros_like(Phi)
         Theta_u_counts = np.zeros_like(Theta_u)
         Psi_i_counts = np.zeros_like(Psi_i)
+        Pi_u0_counts = np.zeros_like(Pi_u)
+        Pi_u1_counts = np.zeros_like(Pi_u)
 
         for u, i, review in sampled_reviews:
-            for z_s, sentence in review:
+            for y, z_s, sentence in review:
                 Theta_u_counts[u, z_s] += 1
                 Psi_i_counts[i, z_s] += 1
+                if y == 0:
+                    Pi_u0_counts[u] += 1
+                else:
+                    Pi_u1_counts[u] += 1
                 for w in sentence:
                     Phi_counts[z_s, w] += 1
 
@@ -80,19 +88,18 @@ def gibbs_sampling_atm(config, data, vocabulary, Beta_w, Alpha_u, Gamma_i, eta):
         Phi = (Phi_counts + Beta_w) / (Phi_counts.sum(axis=1, keepdims=True) + Beta_w.sum())
         Theta_u = (Theta_u_counts + Alpha_u) / (Theta_u_counts.sum(axis=1, keepdims=True) + Alpha_u.sum())
         Psi_i = (Psi_i_counts + Gamma_i) / (Psi_i_counts.sum(axis=1, keepdims=True) + Gamma_i.sum())
+        Pi_u = (Pi_u0_counts + eta[0]) / (Pi_u0_counts + Pi_u1_counts + eta[0] + eta[1])
 
-        new_params = [Phi, Theta_u, Psi_i]
+        new_params = [Phi, Theta_u, Psi_i, Pi_u]
         if has_converged(old_params, new_params):
             print("Gibbs Sampling converged.")
             break
         old_params = new_params
 
-    return {
-        'Phi': Phi,
-        'Theta_u': Theta_u,
-        'Psi_i': Psi_i,
-        'Pi_u': Pi_u,
-    }
+    params = {'Phi': Phi, 'Theta_u': Theta_u, 'Psi_i': Psi_i, 'Pi_u': Pi_u}
+    params_path = os.path.join(config.save_dir, 'params.pkl')
+    pickle.dump(params, open(params_path, 'wb'))
+    return params
 
 
 def has_converged(old_params, new_params, tolerance=1e-4):
