@@ -1,0 +1,11 @@
+torch
+numpy
+pandas
+scipy
+scikit-learn
+nltk
+tqdm
+cornac
+tensorboard
+evaluate
+transformers
