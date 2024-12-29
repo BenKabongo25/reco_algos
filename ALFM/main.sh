@@ -1,0 +1,22 @@
+python3 main.py \
+    --dataset_name Hotels \
+    --data_path /home/b.kabongo/aspects_datasets/Hotels/data.csv \
+    --train_size 0.8 \
+    --test_size 0.1 \
+    --val_size 0.1 \
+    --n_factors 128 \
+    --n_topics 10 \
+    --n_aspects 6 \
+    --vocabulary_size 10000 \
+    --gibbs_sampling_iterations 1000 \
+    --n_epochs 50 \
+    --batch_size 512 \
+    --lr 0.001 \
+    --lambda_u 0.01 \
+    --lambda_i 0.01 \
+    --lambda_a 0.01 \
+    --lambda_b 0.01 \
+    --seed 42 \
+    --verbose \
+    --save_dir /home/b.kabongo/exps/Hotels/ALFM/ \
+    --model_params_path /home/b.kabongo/ALFM/Hotels/params.pkl

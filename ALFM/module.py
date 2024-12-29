@@ -9,81 +9,28 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.stats import dirichlet, bernoulli, multinomial
+from typing import Dict
 
-
-def generate_atm(config, beta_w, gamma_u, gamma_i, alpha_u, alpha_i, eta):
-    """ Aspect-aware Topic Model (ATM) generation process.
-
-    Parameters:
-    - n_topics: Number of latent topics in ATM
-    - n_users: Number of users
-    - n_items: Number of items
-    - n_aspects: Number of aspects
-
-    - beta_w: Dirichlet parameters for topic-word distributions
-    - gamma_u: Dirichlet parameters for user aspect distributions
-    - gamma_i: Dirichlet parameters for item aspect distributions
-    - alpha_u: Dirichlet priors for user aspect-topic distributions
-    - alpha_i: Dirichlet priors for item aspect-topic distributions
-    - eta: Beta priors for Bernoulli parameter
-
-    Returns:
-    - Dictionary of sampled parameters and generated data.
-    """
-    phi = dirichlet.rvs(beta_w, size=config.n_topics)
-
-    lambda_u = dirichlet.rvs(gamma_u, size=config.n_users)
-    lambda_i = dirichlet.rvs(gamma_i, size=config.n_items)
-
-    theta_u = np.array([dirichlet.rvs(alpha_u) for _ in range(config.n_users)])  # (n_users, n_aspects, n_topics)
-    psi_i = np.array([dirichlet.rvs(alpha_i) for _ in range(config.n_items)])  # (n_items, n_aspects, n_topics)
-
-    pi_u = np.random.beta(eta[0], eta[1], size=config.n_users)
-
-    reviews = []
-
-    for u in range(config.n_users):
-        for i in range(config.n_items):
-            review = []
-            for _ in range(np.random.poisson(5)):
-                y = bernoulli.rvs(pi_u[u])
-                if y == 0:
-                    a_s = multinomial.rvs(1, lambda_u[u]).argmax()
-                    z_s = multinomial.rvs(1, theta_u[u, a_s]).argmax()
-                else:
-                    a_s = multinomial.rvs(1, lambda_i[i]).argmax()
-                    z_s = multinomial.rvs(1, psi_i[i, a_s]).argmax()
-                
-                words = multinomial.rvs(1, phi[z_s], size=np.random.poisson(10))
-                review.append((a_s, z_s, words))
-            reviews.append((u, i, review))
-
-    return {
-        'phi': phi,
-        'lambda_u': lambda_u,
-        'lambda_i': lambda_i,
-        'theta_u': theta_u,
-        'psi_i': psi_i,
-        'pi_u': pi_u,
-        'reviews': reviews
-    }
+from atm import gibbs_sampling_atm
 
 
 class JSD(nn.Module):
-    """Jensen-Shannon Divergence
+    """ Jensen-Shannon Divergence
         JSD(P, Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M)
         where M = 0.5 * (P + Q)
     """
 
     def __init__(self):
         super(JSD, self).__init__()
-        self.KL = nn.KLDivLoss(reduction='batchmean', log_target=True)
+        self.KL = nn.KLDivLoss(reduction='none', log_target=True)
 
-    def forward(self, P: torch.tensor, Q: torch.tensor):
-        P, Q = P.view(-1, P.size(-1)), Q.view(-1, Q.size(-1))
-        M = (0.5 * (P + Q)).log()
-        return 0.5 * (self.KL(M, P.log()) + self.KL(M, Q.log()))
+    def forward(self, P: torch.Tensor, Q: torch.Tensor):
+        assert P.shape == Q.shape, "Shapes of P and Q must match"
+        M = 0.5 * (P + Q)
+        kl_pm = self.KL(M.log(), P.log()).sum(dim=-1)  # KL(P || M)
+        kl_qm = self.KL(M.log(), Q.log()).sum(dim=-1)  # KL(Q || M)
+        jsd = 0.5 * (kl_pm + kl_qm)
+        return jsd
 
 
 class ALFMLoss(nn.Module):
@@ -102,15 +49,14 @@ class ALFMLoss(nn.Module):
         self.lambda_b = config.lambda_b
 
     def forward(self, R: torch.Tensor, R_hat: torch.Tensor, U: torch.Tensor, I: torch.Tensor,
-                A: torch.Tensor, Bu: torch.Tensor, Bi: torch.Tensor) -> torch.Tensor:
+                A: torch.Tensor, Bu: torch.Tensor=None, Bi: torch.Tensor=None) -> torch.Tensor:
         
-        term1 = 0.5 * torch.sum((R - R_hat) ** 2)
-        term2 = 0.5 * self.lambda_u * torch.sum(U ** 2)
-        term3 = 0.5 * self.lambda_i * torch.sum(I ** 2)
-        term4 = 0.5 * self.lambda_a * torch.sum(torch.abs(A))
-        term5 = 0.5 * self.lambda_b * (torch.sum(Bu ** 2) + torch.sum(Bi ** 2))
+        loss = 0.5 * torch.sum((R - R_hat) ** 2)
+        loss += 0.5 * self.lambda_u * torch.sum(U ** 2)
+        loss += 0.5 * self.lambda_i * torch.sum(I ** 2)
+        loss += 0.5 * self.lambda_a * torch.sum(torch.abs(A))
+        loss += 0.5 * self.lambda_b * (torch.sum(Bu ** 2) + torch.sum(Bi ** 2))
 
-        loss = term1 + term2 + term3 + term4 + term5
         return loss
 
 
@@ -132,27 +78,27 @@ class ALFM(nn.Module):
         self.user_embedding = nn.Embedding(config.n_users, config.n_factors) # (n_users, n_factors)
         self.item_embedding = nn.Embedding(config.n_items, config.n_factors) # (n_items, n_factors)
 
-        self.A = nn.Parameter(torch.empty(config.n_aspects, config.n_factors)) # (n_aspects, n_factors)
-        self.Bu = nn.Parameter(torch.empty(config.n_users, config.n_factors)) # (n_users, 1)
-        self.Bi = nn.Parameter(torch.empty(config.n_items, config.n_factors)) # (n_items, 1)
-        self.B = nn.Parameter(torch.empty(1)) # (1,)
+        self.A = nn.Parameter(torch.ones(config.n_aspects, config.n_factors)) # (n_aspects, n_factors)
+        self.Bu = nn.Parameter(torch.zeros(config.n_users)) # (n_users, 1)
+        self.Bi = nn.Parameter(torch.zeros(config.n_items)) # (n_items, 1)
+        self.B = nn.Parameter(torch.zeros(1)) # (1,)
 
         self.JSD = JSD()
-
+        self.loss = ALFMLoss(config)
+    
     @classmethod
-    def from_parameters(cls, config, beta_w, gamma_u, gamma_i, alpha_u, alpha_i, eta):
-        res = generate_atm(config, beta_w, gamma_u, gamma_i, alpha_u, alpha_i, eta)
+    def from_gibbs_sampling_atm(cls, config, data, vocabulary, Beta_w, Gamma_u, Gamma_i, Alpha_u, Alpha_i, eta):
+        res = gibbs_sampling_atm(config, data, vocabulary, Beta_w, Gamma_u, Gamma_i, Alpha_u, Alpha_i, eta)
         return cls(
             config, 
-            torch.tensor(res['theta_u'], dtype=torch.float32),
-            torch.tensor(res['psi_i'], dtype=torch.float32),
-            torch.tensor(res['pi_u'], dtype=torch.float32),
-            torch.tensor(res['lambda_u'], dtype=torch.float32),
-            torch.tensor(res['lambda_i'], dtype=torch.float32)
+            torch.tensor(res['Theta_u'], dtype=torch.float32),
+            torch.tensor(res['Psi_i'], dtype=torch.float32),
+            torch.tensor(res['Pi_u'], dtype=torch.float32),
+            torch.tensor(res['Lambda_u'], dtype=torch.float32),
+            torch.tensor(res['Lambda_i'], dtype=torch.float32)
         )
-    
 
-    def forward(self, U_ids, I_ids):
+    def forward(self, U_ids: torch.Tensor, I_ids: torch.Tensor, R: torch.Tensor=None) -> Dict[str, torch.Tensor]:
         U = self.user_embedding(U_ids)  # (batch_size, n_factors)
         I = self.item_embedding(I_ids)  # (batch_size, n_factors)
 
@@ -170,9 +116,23 @@ class ALFM(nn.Module):
         P_UIA = Pi_u.unsqueeze(1) * Lambda_u + (1 - Pi_u).unsqueeze(1) * Lambda_i # (batch_size, n_aspects)
         A = self.A # (n_aspects, n_factors)
 
-        A_ratings = ((A.unsqueeze(0) * U.unsqueeze(1)) * (A.unsqueeze(0) * I.unsqueeze(1))).sum(dim=2) 
-        A_ratings = S_UIA * A_ratings # (batch_size, n_aspects)
-        
-        R = (P_UIA * A_ratings).sum(dim=1) + Bu + Bi + B # (batch_size,)
-        return R, A_ratings
+        A_ratings_hat = ((A.unsqueeze(0) * U.unsqueeze(1)) * (A.unsqueeze(0) * I.unsqueeze(1))).sum(dim=2) 
+        A_ratings_hat = S_UIA * A_ratings_hat # (batch_size, n_aspects)
+        R_hat = (P_UIA * A_ratings_hat).sum(dim=1) + Bu + Bi + B # (batch_size,)
 
+        loss = None
+        if R is not None:
+            loss = self.loss(R, R_hat, U, I, self.A, Bu, Bi)
+
+        _out = {
+            "R_hat": R_hat,
+            "A_ratings_hat": A_ratings_hat,
+            "loss": loss
+        }
+        return _out
+    
+    def save_model(self, path):
+        torch.save(self.state_dict(), path)
+
+    def load_model(self, path):
+        self.load_state_dict(torch.load(path))
