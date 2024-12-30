@@ -45,8 +45,9 @@ def train(model: ANR, config, optimizer, loss_fn, dataloader):
         I_ids = torch.LongTensor(batch["item_id"]).to(config.device) # (batch_size,)
         R = torch.tensor(batch["overall_rating"], dtype=torch.float32).to(config.device) # (batch_size,)
         A_ratings = None
-        if getattr(config, "aspects", None) is not None:
-            A_ratings = torch.tensor(batch["aspects_ratings"], dtype=torch.float32).to(config.device) # (batch_size, n_aspects)
+        if config.aspects_flag:
+            #A_ratings = torch.tensor(batch["aspects_ratings"], dtype=torch.float32).to(config.device) # (batch_size, n_aspects)
+            A_ratings = torch.stack(batch["aspects_ratings"], dim=1).to(dtype=torch.float32, device=config.device) # (batch_size, n_aspects)
 
         output = model(U_ids, I_ids)
         R_hat = output["overall_rating"]
@@ -70,8 +71,7 @@ def eval(model: ANR, config, dataloader):
 
     references = {"overall_rating": []}
     predictions = {"overall_rating": []}
-    aspects_flag = getattr(config, "aspects", None) is not None
-    if aspects_flag:
+    if config.aspects_flag:
         for aspect in config.aspects:
             references[aspect] = []
             predictions[aspect] = []
@@ -81,8 +81,9 @@ def eval(model: ANR, config, dataloader):
         I_ids = torch.LongTensor(batch["item_id"]).to(config.device) # (batch_size,)
         R = torch.tensor(batch["overall_rating"], dtype=torch.float32).to(config.device) # (batch_size,)
         A_ratings = None
-        if aspects_flag:
-            A_ratings = torch.tensor(batch["aspects_ratings"], dtype=torch.float32).to(config.device)
+        if config.aspects_flag:
+            #A_ratings = torch.tensor(batch["aspects_ratings"], dtype=torch.float32).to(config.device)
+            A_ratings = torch.stack(batch["aspects_ratings"], dim=1).to(dtype=torch.float32, device=config.device) # (batch_size, n_aspects)
 
         output = model(U_ids, I_ids)
         R_hat = output["overall_rating"]
@@ -90,10 +91,10 @@ def eval(model: ANR, config, dataloader):
 
         references["overall_rating"].extend(R.cpu().detach().tolist())
         predictions["overall_rating"].extend(R_hat.cpu().detach().tolist())
-        if aspects_flag:
-            for aspect in config.aspects:
-                references[aspect].extend(A_ratings[:, aspect].cpu().detach().tolist())
-                predictions[aspect].extend(A_ratings_hat[:, aspect].cpu().detach().tolist())
+        if config.aspects_flag:
+            for a, aspect in enumerate(config.aspects):
+                references[aspect].extend(A_ratings[:, a].cpu().detach().tolist())
+                predictions[aspect].extend(A_ratings_hat[:, a].cpu().detach().tolist())
 
         if config.verbose and batch_idx == 0:
             n_samples = min(10, len(U_ids))
@@ -104,9 +105,9 @@ def eval(model: ANR, config, dataloader):
                     f"Item ID: {I_ids[i]}",
                     f"Overall Rating: Actual={R[i]:.4f} Predicted={R_hat[i]:4f}"
                 ])
-                if aspects_flag:
-                    for aspect in config.aspects:
-                        log += f"\nAspect {aspect}: Actual={A_ratings[i, aspect]:.4f} Predicted={A_ratings_hat[i, aspect]:.4f}"
+                if config.aspects_flag:
+                    for a, aspect in enumerate(config.aspects):
+                        log += f"\nAspect {aspect}: Actual={A_ratings[i, a]:.4f} Predicted={A_ratings_hat[i, a]:.4f}"
             config.logger.info(log)
 
     scores = {}
@@ -221,15 +222,14 @@ def run(config):
     config.device = device
 
     columns = ["user_id", "item_id", "rating", "review"]
-    aspects_flag = getattr(config, "aspects", None) is not None
-    if aspects_flag:
+    if config.aspects_flag:
         columns += config.aspects
 
     if config.data_path != "":
         data_df = pd.read_csv(config.data_path).dropna()[columns]
         data_df["rating"] = data_df["rating"].astype(float)
 
-        if aspects_flag:
+        if config.aspects_flag:
             for aspect in config.aspects:
                 data_df[aspect] = data_df[aspect].astype(float)
 
@@ -251,7 +251,7 @@ def run(config):
         val_df = pd.read_csv(config.val_path)[columns]
         val_df["rating"] = val_df["rating"].astype(float)
 
-        if aspects_flag:
+        if config.aspects_flag:
             for aspect in config.aspects:
                 train_df[aspect] = train_df[aspect].astype(float)
                 test_df[aspect] = test_df[aspect].astype(float)
@@ -341,13 +341,16 @@ if __name__ == "__main__":
     parser.add_argument("--val_path", type=str, default="")
     parser.add_argument("--words_embedding_path", type=str, default="")
 
+    parser.add_argument("--aspects", type=str, nargs="+", default="")
+    parser.add_argument("--aspects_flag", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(aspects_flag=True)
     parser.add_argument("--n_aspects", type=int, default=6)
     parser.add_argument("--d_words", type=int, default=300)
     parser.add_argument("--bias", action=argparse.BooleanOptionalAction)
     parser.set_defaults(bias=True)
     parser.add_argument("--context_windows_size", type=int, default=3)
-    parser.add_argument("--hidden_size1", type=int, default=128)
-    parser.add_argument("--hidden_size2", type=int, default=64)
+    parser.add_argument("--hidden_size1", type=int, default=15)
+    parser.add_argument("--hidden_size2", type=int, default=50)
     parser.add_argument("--doc_len", type=int, default=500)
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--vocab_size", type=int, default=10_000)

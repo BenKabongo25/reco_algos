@@ -34,7 +34,7 @@ class AspectRatingsDataset(Dataset):
 			"overall_rating": overall_rating,
 		}
 
-		if getattr(self.config, "aspects", None) is not None:
+		if self.config.aspects_flag:
 			aspects_ratings = [row[aspect] for aspect in self.config.aspects]
 			_out["aspects_ratings"] = aspects_ratings
 			

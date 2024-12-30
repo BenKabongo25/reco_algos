@@ -6,19 +6,21 @@ python3 main.py \
     --val_size 0.1 \
     --words_embedding_path /home/b.kabongo/embeddings/glove/glove.6B.300d.txt \
     --d_words 300 \
+    --aspects cleanliness location rooms service sleep_quality value \
     --n_aspects 6 \
     --bias \
     --context_windows_size 5 \
-    --hidden_size1 128 \
-    --hidden_size2 64 \
+    --hidden_size1 15 \
+    --hidden_size2 50 \
     --doc_len 500 \
     --dropout 0.5 \
     --vocab_size 10000 \
     --alpha 0.143 \
     --beta 0.857 \
     --batch_size 64 \
-    --lr 0.001 \
+    --lr 0.002 \
     --n_epochs 50 \
     --seed 42 \
     --verbose \
     --save_dir /home/b.kabongo/exps/Hotels/ANR/ \
+    --model_params_path /home/b.kabongo/exps/Hotels/ANR/params.pkl \

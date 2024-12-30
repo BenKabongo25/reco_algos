@@ -124,7 +124,38 @@ class AspectsImportanceEstimator(nn.Module):
 		return U_aspects_importance, I_aspects_importance
 	
 
+class PretrainingRatingPredictor(nn.Module):
+	""" Pretraining Rating Predictor """
+
+	def __init__(self, config):
+		super().__init__()
+		self.config = config
+
+		self.user_proj = nn.Linear(self.config.n_aspects * self.config.hidden_size1, self.config.hidden_size1)
+		self.item_proj = nn.Linear(self.config.n_aspects * self.config.hidden_size1, self.config.hidden_size1)
+		self.user_dropout = nn.Dropout(self.config.dropout)
+		self.item_dropout = nn.Dropout(self.config.dropout)		
+
+		self.prediction = nn.Linear(2 * self.config.hidden_size1, 1)
+
+		self.user_proj.weight.data.uniform_(-0.01, 0.01)
+		self.item_proj.weight.data.uniform_(-0.01, 0.01)
+		self.prediction.weight.data.uniform_(-0.01, 0.01)
+
+	def forward(self, U_aspects_document, I_aspects_document):
+		U_aspects_document = U_aspects_document.view(-1, self.config.n_aspects * self.config.hidden_size1)
+		I_aspects_document = I_aspects_document.view(-1, self.config.n_aspects * self.config.hidden_size1)
+
+		U_abstract = self.user_dropout(F.relu(self.user_proj(U_aspects_document)))
+		I_abstract = self.item_dropout(F.relu(self.item_proj(I_aspects_document)))
+
+		R = self.prediction(torch.cat((U_abstract, I_abstract), 1))
+		_out = {"overall_rating": R}
+		return _out
+
+
 class RatingPredictor(nn.Module):
+	""" Rating Predictor """
 
 	def __init__(self, config):
 		super().__init__()
@@ -142,8 +173,8 @@ class RatingPredictor(nn.Module):
 			 	U_aspects_document: torch.Tensor, I_aspects_document: torch.Tensor, 
 				U_aspects_importance: torch.Tensor, I_aspects_importance: torch.Tensor) -> Dict[str, torch.Tensor]:
 		# U_ids, I_ids: (batch)
-		# U_aspects_document, I_aspects_document: (batch, num_aspects, hidden_size1)
-		# U_aspects_importance, I_aspects_importance: (batch, num_aspects)
+		# U_aspects_document, I_aspects_document: (batch, n_aspects, hidden_size1)
+		# U_aspects_importance, I_aspects_importance: (batch, n_aspects)
 
 		U_aspects_document = self.user_dropout(U_aspects_document)
 		I_aspects_document = self.item_dropout(I_aspects_document)
@@ -174,6 +205,7 @@ class RatingPredictor(nn.Module):
 	
 
 class RatingsLoss(nn.Module):
+	""" Ratings Loss """
 
 	def __init__(self, config):
 		super().__init__()
