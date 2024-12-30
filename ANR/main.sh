@@ -1,0 +1,24 @@
+python3 main.py \
+    --dataset_name Hotels \
+    --data_path /home/b.kabongo/aspects_datasets/Hotels/data.csv \
+    --train_size 0.8 \
+    --test_size 0.1 \
+    --val_size 0.1 \
+    --words_embedding_path /home/b.kabongo/embeddings/glove/glove.6B.300d.txt \
+    --d_words 300 \
+    --n_aspects 6 \
+    --bias \
+    --context_windows_size 5 \
+    --hidden_size1 128 \
+    --hidden_size2 64 \
+    --doc_len 500 \
+    --dropout 0.5 \
+    --vocab_size 10000 \
+    --alpha 0.143 \
+    --beta 0.857 \
+    --batch_size 64 \
+    --lr 0.001 \
+    --n_epochs 50 \
+    --seed 42 \
+    --verbose \
+    --save_dir /home/b.kabongo/exps/Hotels/ANR/ \
