@@ -199,7 +199,11 @@ class RatingPredictor(nn.Module):
 
 		_out = {
 			"overall_rating": R,
-			"aspects_ratings": aspects_ratings
+			"aspects_ratings": aspects_ratings,
+			"U_aspects_importance": U_aspects_importance,
+			"I_aspects_importance": I_aspects_importance,
+			"Bu": Bu if self.config.bias else None,
+			"Bi": Bi if self.config.bias else None
 		}
 		return _out
 	
@@ -214,14 +218,24 @@ class RatingsLoss(nn.Module):
 		self.aspect_rating_loss = nn.MSELoss()
 
 	def forward(self, R: torch.Tensor, R_hat: torch.Tensor,
-				A_ratings: torch.Tensor=None, A_ratings_hat: torch.Tensor=None) -> Dict[str, torch.Tensor]:
+				A_ratings: torch.Tensor=None, A_ratings_hat: torch.Tensor=None,
+				Bu: torch.Tensor=None, Bi: torch.Tensor=None) -> Dict[str, torch.Tensor]:
+		# R, R_hat: (batch)
+		# A_ratings, A_ratings_hat: (batch, n_aspects)
+		# Bu, Bi: (n_users), (n_items)
+
 		overall_rating_loss = self.overall_rating_loss(R_hat, R)
-		if getattr(self.config, "aspects", None) is not None:
+
+		if A_ratings is not None and A_ratings_hat is not None:
 			aspect_rating_loss = self.aspect_rating_loss(A_ratings_hat.flatten(), A_ratings.flatten())
 			total_loss = self.config.alpha * overall_rating_loss + self.config.beta * aspect_rating_loss
 		else:
 			aspect_rating_loss = torch.tensor(0.0).to(self.config.device)
 			total_loss = overall_rating_loss
+
+		if Bu is not None and Bi is not None:
+			total_loss += self.config.lambda_ * (Bu.norm() + Bi.norm())
+		
 		return {"total": total_loss, "overall_rating": overall_rating_loss, "aspects_ratings": aspect_rating_loss}
 
 
@@ -240,6 +254,15 @@ class ANR(nn.Module):
 		self.aspects_representation_learner = AspectBasedRepresentationLearner(self.config)
 		self.aspects_importance_estimator = AspectsImportanceEstimator(self.config)
 		self.rating_predictor = RatingPredictor(self.config)
+		self.pretraining_rating_predictor = PretrainingRatingPredictor(self.config)
+
+		self.pretraining_phase = False
+
+	def set_pretraining_phase(self, pretraining_phase: bool):
+		self.pretraining_phase = pretraining_phase
+
+	def is_pretraining_phase(self):
+		return self.pretraining_phase
 
 	def forward(self, U_ids: torch.Tensor, I_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
 		U_documents = self.user_document[U_ids] # (batch, doc_len)
@@ -249,16 +272,22 @@ class ANR(nn.Module):
 
 		U_aspects_attention, U_aspects_document = self.aspects_representation_learner(U_documents_embeddings)
 		I_aspects_attention, I_aspects_document = self.aspects_representation_learner(I_documents_embeddings)
-		U_co_attention, I_co_attention = self.aspects_importance_estimator(U_aspects_document, I_aspects_document)
-		_out = self.rating_predictor(U_ids, I_ids, U_aspects_document, I_aspects_document, U_co_attention, I_co_attention)
+
+		if self.pretraining_phase:
+			_out = self.pretraining_rating_predictor(U_aspects_document, I_aspects_document)
+		else:
+			U_co_attention, I_co_attention = self.aspects_importance_estimator(U_aspects_document, I_aspects_document)
+			_out = self.rating_predictor(U_ids, I_ids, U_aspects_document, I_aspects_document, U_co_attention, I_co_attention)
+			_out.update({
+				"U_co_attention": U_co_attention,
+				"I_co_attention": I_co_attention
+			})
 		
 		_out.update({
 			"U_aspects_attention": U_aspects_attention,
 			"I_aspects_attention": I_aspects_attention,
 			"U_aspects_document": U_aspects_document,
 			"I_aspects_document": I_aspects_document,
-			"U_co_attention": U_co_attention,
-			"I_co_attention": I_co_attention,
 		})
 		return _out
 

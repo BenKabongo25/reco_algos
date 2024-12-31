@@ -36,7 +36,7 @@ def rating_evaluation_pytorch(config: Any,
     return {'rmse': rmse.item(), 'mae': mae.item()}
 
 
-def train(model: ANR, config, optimizer, loss_fn, dataloader):
+def train(model: ANR, config: Any, optimizer: torch.optim.Optimizer, loss_fn: RatingsLoss, dataloader: DataLoader):
     model.train()
     losses = {"total": 0.0, "overall_rating": 0.0, "aspects_ratings": 0.0}
 
@@ -44,15 +44,23 @@ def train(model: ANR, config, optimizer, loss_fn, dataloader):
         U_ids = torch.LongTensor(batch["user_id"]).to(config.device) # (batch_size,)
         I_ids = torch.LongTensor(batch["item_id"]).to(config.device) # (batch_size,)
         R = torch.tensor(batch["overall_rating"], dtype=torch.float32).to(config.device) # (batch_size,)
-        A_ratings = None
-        if config.aspects_flag:
-            #A_ratings = torch.tensor(batch["aspects_ratings"], dtype=torch.float32).to(config.device) # (batch_size, n_aspects)
-            A_ratings = torch.stack(batch["aspects_ratings"], dim=1).to(dtype=torch.float32, device=config.device) # (batch_size, n_aspects)
 
         output = model(U_ids, I_ids)
         R_hat = output["overall_rating"]
-        A_ratings_hat = output["aspects_ratings"]
-        all_loss = loss_fn(R, R_hat, A_ratings, A_ratings_hat)
+
+        Bu = None
+        Bi = None
+        A_ratings = None
+        A_ratings_hat = None
+        if not model.is_pretraining_phase():
+            if config.aspects_flag:
+                A_ratings = torch.stack(batch["aspects_ratings"], dim=1).to(dtype=torch.float32, device=config.device) # (batch_size, n_aspects)
+                A_ratings_hat = output["aspects_ratings"]
+            if config.bias:
+                Bu = output["Bu"]
+                Bi = output["Bi"]
+
+        all_loss = loss_fn(R, R_hat, A_ratings, A_ratings_hat, Bu, Bi)
         loss = all_loss["total"]
         optimizer.zero_grad()
         loss.backward()
@@ -66,12 +74,13 @@ def train(model: ANR, config, optimizer, loss_fn, dataloader):
     return losses
     
 
-def eval(model: ANR, config, dataloader):
+def eval(model: ANR, config: Any, dataloader: DataLoader):
     model.eval()
 
     references = {"overall_rating": []}
     predictions = {"overall_rating": []}
-    if config.aspects_flag:
+    flag = not model.is_pretraining_phase() and config.aspects_flag
+    if flag:
         for aspect in config.aspects:
             references[aspect] = []
             predictions[aspect] = []
@@ -80,18 +89,15 @@ def eval(model: ANR, config, dataloader):
         U_ids = torch.LongTensor(batch["user_id"]).to(config.device) # (batch_size,)
         I_ids = torch.LongTensor(batch["item_id"]).to(config.device) # (batch_size,)
         R = torch.tensor(batch["overall_rating"], dtype=torch.float32).to(config.device) # (batch_size,)
-        A_ratings = None
-        if config.aspects_flag:
-            #A_ratings = torch.tensor(batch["aspects_ratings"], dtype=torch.float32).to(config.device)
-            A_ratings = torch.stack(batch["aspects_ratings"], dim=1).to(dtype=torch.float32, device=config.device) # (batch_size, n_aspects)
 
         output = model(U_ids, I_ids)
         R_hat = output["overall_rating"]
-        A_ratings_hat = output["aspects_ratings"]
 
         references["overall_rating"].extend(R.cpu().detach().tolist())
         predictions["overall_rating"].extend(R_hat.cpu().detach().tolist())
-        if config.aspects_flag:
+        if flag:
+            A_ratings = torch.stack(batch["aspects_ratings"], dim=1).to(dtype=torch.float32, device=config.device) # (batch_size, n_aspects)
+            A_ratings_hat = output["aspects_ratings"]
             for a, aspect in enumerate(config.aspects):
                 references[aspect].extend(A_ratings[:, a].cpu().detach().tolist())
                 predictions[aspect].extend(A_ratings_hat[:, a].cpu().detach().tolist())
@@ -103,11 +109,11 @@ def eval(model: ANR, config, dataloader):
                 log += "\n" + " ".join([
                     f"User ID: {U_ids[i]}",
                     f"Item ID: {I_ids[i]}",
-                    f"Overall Rating: Actual={R[i]:.4f} Predicted={R_hat[i]:4f}"
+                    f"Overall Rating: Actual={R[i].item():.4f} Predicted={R_hat[i].item():4f}"
                 ])
-                if config.aspects_flag:
+                if flag:
                     for a, aspect in enumerate(config.aspects):
-                        log += f"\nAspect {aspect}: Actual={A_ratings[i, a]:.4f} Predicted={A_ratings_hat[i, a]:.4f}"
+                        log += f"\nAspect {aspect}: Actual={A_ratings[i, a].item():.4f} Predicted={A_ratings_hat[i, a].item():.4f}"
             config.logger.info(log)
 
     scores = {}
@@ -134,9 +140,22 @@ def trainer(model: ANR, config, train_dataloader, eval_dataloader):
     train_infos = {"loss": []}
     eval_infos = {}
 
+    n_pretraining_epochs = int(config.pretraining_epochs_ratio * config.n_epochs)
+    pretraining = True
+    label = "Pretraining"
+    model.set_pretraining_phase(pretraining)
+    config.logger.info("Start of pretraining phase...")
+
     best_rating = float("inf")
     progress_bar = tqdm(range(1, 1 + config.n_epochs), "Training", colour="blue")
     for epoch in progress_bar:
+        if epoch == n_pretraining_epochs + 1:
+            pretraining = False
+            label = "Training"
+            model.set_pretraining_phase(pretraining)
+            config.logger.info("End of pretraining phase")
+            config.logger.info("Start of training phase...")
+
         losses = train(model, config, optimizer, loss_fn, train_dataloader)        
         write_loss(config.writer, losses, "train", epoch)
 
@@ -147,7 +166,7 @@ def trainer(model: ANR, config, train_dataloader, eval_dataloader):
         train_loss = losses["total"]
 
         desc = (
-            f"[{epoch} / {config.n_epochs}] Loss: {train_loss:.4f} " +
+            f"[{label} {epoch} / {config.n_epochs}] Loss: {train_loss:.4f} " +
             f"Best: {config.rating_metric}={best_rating:.4f}"
         )
 
@@ -170,7 +189,7 @@ def trainer(model: ANR, config, train_dataloader, eval_dataloader):
                 best_rating = eval_rating
 
             desc = (
-                f"[{epoch} / {config.n_epochs}] " +
+                f"[{label} {epoch} / {config.n_epochs}] " +
                 f"Loss: train={train_loss:.4f} " +
                 f"Rating ({config.rating_metric}): test={eval_rating:.4f} best={best_rating:.4f}"
             )
@@ -360,13 +379,15 @@ if __name__ == "__main__":
     parser.add_argument("--load_model", action=argparse.BooleanOptionalAction)
     parser.set_defaults(load_model=False)
 
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=2e-3)
     parser.add_argument("--batch_size", type=int, default=512)
 
     parser.add_argument("--alpha", type=float, default=1/7)
     parser.add_argument("--beta", type=float, default=6/7)
+    parser.add_argument("--lambda_", type=float, default=1e-6)
 
     parser.add_argument("--n_epochs", type=int, default=50)
+    parser.add_argument("--pretraining_epochs_ratio", type=float, default=0.2)
     parser.add_argument("--rating_metric", type=str, default="rmse")
     parser.add_argument("--min_rating", type=float, default=1.0)
     parser.add_argument("--max_rating", type=float, default=5.0)
