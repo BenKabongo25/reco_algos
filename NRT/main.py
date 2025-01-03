@@ -63,7 +63,12 @@ def eval(model, config, dataloader, word_dict):
 
             U_ids = torch.LongTensor(U_ids).to(config.device) # (batch_size,)
             I_ids = torch.LongTensor(I_ids).to(config.device)
-            reviews_hat = model.generate(U_ids, I_ids, word_dict, config.review_length)
+            ids = model.generate(U_ids, I_ids, config.review_length, config.bos_idx)  # (batch_size, seq_len)
+            reviews_hat = []
+            for i in range(len(ids)):
+                review = word_dict.ids2tokens(ids[i])
+                review = [word for word in review if word not in ['<bos>', '<eos>', '<pad>', '<unk>']]
+                reviews_hat.append(" ".join(review))
 
             users.extend(U_ids.cpu().detach().tolist())
             items.extend(I_ids.cpu().detach().tolist())
@@ -156,7 +161,7 @@ def main(config):
     config.res_file_path = os.path.join(config.save_dir, "res.json")
     config.save_model_path = os.path.join(config.save_dir, "model.pth")
 
-    logger = logging.getLogger("Att2Seq" + config.dataset_name)
+    logger = logging.getLogger("ANR" + config.dataset_name)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler = logging.FileHandler(config.log_file_path)

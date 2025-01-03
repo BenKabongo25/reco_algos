@@ -116,6 +116,8 @@ def ids2tokens(ids, tokenizer, eos):
 def generate_and_evaluate(model, config, tokenizer, dataloader):
     model.eval()
 
+    users = []
+    items = []
     reference_texts = []
     reference_ratings = []
     predict_texts = []
@@ -131,6 +133,8 @@ def generate_and_evaluate(model, config, tokenizer, dataloader):
             seq = torch.LongTensor(batch['tokens']).to(config.device)
             review = batch['review']
 
+            users.extend(user.cpu().detach().numpy().tolist())
+            items.extend(item.cpu().detach().numpy().tolist())
             reference_texts.extend(review)
             reference_ratings.extend(rating.cpu().detach().numpy().tolist())
 
@@ -152,7 +156,13 @@ def generate_and_evaluate(model, config, tokenizer, dataloader):
 
     ratings_scores = rating_evaluation_pytorch(config, predictions=predict_ratings, references=reference_ratings)
     review_scores = review_evaluation(config, predictions=predict_texts, references=reference_texts)
-    return {'text': review_scores, 'rating': ratings_scores}
+    output_df = pd.DataFrame({
+        'user_id': users, 
+        'item_id': items, 
+        'reference': reference_texts,
+        'prediction': predict_texts
+    })
+    return {'text': review_scores, 'rating': ratings_scores, 'output': output_df}
 
 
 def trainer(model, config, optimizer, rating_criterion, train_dataloader, val_dataloader):
@@ -273,10 +283,12 @@ def main(config):
         model = torch.load(f).to(config.device)
     logging.info('Start testing')
     test_results = generate_and_evaluate(model, config, tokenizer, test_dataloader)
-    results['test'] = test_results
+    results['test'] = {test_results['text'], test_results['rating']}
+    output_df = test_results['output']
 
     # Save results
     logging.info('Saving results')
+    output_df.to_csv(os.path.join(config.save_dir, 'output.csv'), index=False)
     with open(config.results_path, 'w') as f:
         json.dump(results, f)
 

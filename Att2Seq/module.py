@@ -70,12 +70,12 @@ class Att2Seq(nn.Module):
 
     def forward(self, U_ids, I_ids, T_ids):  # (batch_size,) vs. (batch_size, seq_len)
         h0 = self.encoder(U_ids, I_ids)  # (n_layers, batch_size, hidden_size)
-       # print("Forward hidden shape: ", h0.shape)
         c0 = torch.zeros_like(h0)
         logits, _, _ = self.decoder(T_ids, h0, c0)
         return logits  # (batch_size, seq_len, n_tokens)
     
-    def generate(self, U_ids, I_ids, review_length, bos_token):
+    def generate(self, U_ids, I_ids, word_dict, review_length):
+        bos_token = word_dict['<bos>']
         inputs = torch.tensor([bos_token]).unsqueeze(0).to(U_ids.device)  # (1, 1)
         inputs = inputs.repeat(U_ids.size(0), 1) # (batch_size, 1)
         hidden = None
@@ -93,7 +93,13 @@ class Att2Seq(nn.Module):
             inputs = torch.argmax(word_prob, dim=1, keepdim=True)  # (batch_size, 1), pick the one with the largest probability
             ids = torch.cat([ids, inputs], 1)  # (batch_size, len++)
         ids = ids[:, 1:].tolist()  # remove bos
-        return ids
+
+        reviews_hat = []
+        for i in range(len(ids)):
+            review = word_dict.ids2tokens(ids[i])
+            review = [word for word in review if word not in ['<bos>', '<eos>', '<pad>', '<unk>']]
+            reviews_hat.append(" ".join(review))
+        return reviews_hat
     
     def save(self, save_model_path: str):
         torch.save(self.state_dict(), save_model_path)
