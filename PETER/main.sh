@@ -1,9 +1,20 @@
 python3 main.py \
+    --dataset_name Hotels \
     --data_path /home/b.kabongo/aspects_datasets/Hotels/data.csv \
     --train_size 0.8 \
-    --val_size 0.1 \
+    --eval_size 0.1 \
     --test_size 0.1 \
     --seed 42 \
+    --embedding_dim 512 \
+    --n_heads 2 \
+    --n_hiddens 2048 \
+    --n_layers 2 \
+    --dropout 0.2 \
+    --vocab_size 20000 \
+    --lambda_rating 0.1 \
+    --lambda_text 1.0 \
+    --lambda_context 1.0 \
+    --peter_mask \
     --lr 0.001 \
     --n_epochs 50 \
     --batch_size 32 \

@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 from typing import *
 
-from utils import preprocess_text
+from utils.text import preprocess_text
 
 
 class RatingReviewFeatureDataset(Dataset):
@@ -48,21 +48,23 @@ class RatingReviewFeatureDataset(Dataset):
         row = self.data_df.iloc[index]
         user_id = self.user_dict.entity2idx[row["user_id"]]
         item_id = self.item_dict.entity2idx[row["item_id"]]
-        rating = row["rating"]
+        rating = float(row["rating"])
         review = self.reviews[index]
         review_ids = self.reviews_ids[index]
-        if self.config.use_feature:
-            features = self.features[index]
-
-        return {
+        _out = {
             "user_id": user_id,
             "item_id": item_id,
             "rating": rating,
             "review": review,
-            "review_ids": review_ids,
-            "features": features
+            "review_ids": review_ids
         }
-    
+
+        if self.config.use_features:
+            features = self.features[index]
+            _out["features"] = features
+
+        return _out
+
 
 def collate_fn(batch):
     collated_batch = {}

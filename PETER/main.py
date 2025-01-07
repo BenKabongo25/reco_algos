@@ -18,11 +18,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, parent_dir)
+
 from module import PETER
 from data import RatingReviewFeatureDataset, build_dictionnaries
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, parent_dir)
 from utils.evaluation import rating_evaluation_pytorch, review_evaluation
 from utils.text import postprocess_text
 from utils.functions import set_seed
@@ -47,7 +48,8 @@ def train(model, config, optimizer, rating_criterion, text_criterion, dataloader
         user = torch.LongTensor(batch['user_id']).to(config.device)
         item = torch.LongTensor(batch['item_id']).to(config.device)
         rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-        seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+        #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+        seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
 
         if config.use_features:
             features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
@@ -56,7 +58,9 @@ def train(model, config, optimizer, rating_criterion, text_criterion, dataloader
             text = seq[:-1]
 
         log_word_prob, log_context_dis, rating_p, _ = model(user, item, text)  # (tgt_len, batch_size, ntoken) vs. (batch_size, ntoken) vs. (batch_size,)
-        context_dis = log_context_dis.unsqueeze(0).repeat((config.review_length - 1, 1, 1))  # (batch_size, ntoken) -> (tgt_len - 1, batch_size, ntoken)
+        #print(log_word_prob.shape, log_context_dis.shape, rating_p.shape)
+        context_dis = log_context_dis.unsqueeze(0).repeat((config.review_length, 1, 1))  # (batch_size, ntoken) -> (tgt_len - 1, batch_size, ntoken)
+        #print(context_dis.shape, seq[1:-1].shape)
         c_loss = text_criterion(context_dis.view(-1, config.n_tokens), seq[1:-1].reshape((-1,)))
         r_loss = rating_criterion(rating_p, rating)
         t_loss = text_criterion(log_word_prob.view(-1, config.n_tokens), seq[1:].reshape((-1,)))
@@ -94,7 +98,8 @@ def evaluate(model, config, rating_criterion, text_criterion, dataloader):
             user = torch.LongTensor(batch['user_id']).to(config.device)
             item = torch.LongTensor(batch['item_id']).to(config.device)
             rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-            seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+            #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+            seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
 
             if config.use_features:
                 features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
@@ -135,7 +140,8 @@ def rating_and_evaluate(model, config, dataloader):
             user = torch.LongTensor(batch['user_id']).to(config.device)
             item = torch.LongTensor(batch['item_id']).to(config.device)
             rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-            seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+            #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+            seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
 
             if config.use_features:
                 features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
@@ -198,7 +204,8 @@ def generate_and_evaluate(model, config, word_dict, dataloader):
             user = torch.LongTensor(batch['user_id']).to(config.device)
             item = torch.LongTensor(batch['item_id']).to(config.device)
             rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-            seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+            #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
+            seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
             review = batch['review']
 
             bos = seq[:, 0].unsqueeze(0) # (1, batch_size)
@@ -244,36 +251,40 @@ def generate_and_evaluate(model, config, word_dict, dataloader):
     return {'text': review_scores, 'rating': ratings_scores, 'output': output_df}
 
 
-def trainer(model, config, optimizer, rating_criterion, text_criterion, train_dataloader, val_dataloader):
-    best_val_loss = float('inf')
+def trainer(model, config, train_dataloader, eval_dataloader):
+    text_criterion = nn.NLLLoss(ignore_index=config.pad_idx)
+    rating_criterion = nn.MSELoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=config.lr)
+
+    best_eval_loss = float('inf')
     endure_count = 0
 
     train_infos = {"text_loss": [], "rating_loss": [], "context_loss": [], "total_loss": []}
-    val_infos = {"text_loss": [], "rating_loss": [], "context_loss": [], "total_loss": []}
+    eval_infos = {"text_loss": [], "rating_loss": [], "context_loss": [], "total_loss": []}
 
     for epoch in range(1, config.n_epochs + 1):
         config.logger.info('epoch {}'.format(epoch))
 
         train_epoch_infos = train(model, config, optimizer, rating_criterion, text_criterion, train_dataloader)
-        val_epoch_infos = evaluate(model, config, rating_criterion, text_criterion, val_dataloader)
+        eval_epoch_infos = evaluate(model, config, rating_criterion, text_criterion, eval_dataloader)
 
         train_infos['text_loss'].append(train_epoch_infos['text_loss'])
         train_infos['rating_loss'].append(train_epoch_infos['rating_loss'])
         train_infos['context_loss'].append(train_epoch_infos['context_loss'])
         train_infos['total_loss'].append(train_epoch_infos['total_loss'])
-        val_infos['text_loss'].append(val_epoch_infos['text_loss'])
-        val_infos['rating_loss'].append(val_epoch_infos['rating_loss'])
-        val_infos['context_loss'].append(val_epoch_infos['context_loss'])
-        val_infos['total_loss'].append(val_epoch_infos['total_loss'])
+        eval_infos['text_loss'].append(eval_epoch_infos['text_loss'])
+        eval_infos['rating_loss'].append(eval_epoch_infos['rating_loss'])
+        eval_infos['context_loss'].append(eval_epoch_infos['context_loss'])
+        eval_infos['total_loss'].append(eval_epoch_infos['total_loss'])
 
-        val_loss = val_epoch_infos['total_loss']
+        eval_loss = eval_epoch_infos['total_loss']
 
         config.logger.info('text ppl {:4.4f} | rating loss {:4.4f} | valid loss {:4.4f} on validation'.format(
-            math.exp(val_epoch_infos['text_loss']), val_epoch_infos['rating_loss'], val_loss))
+            math.exp(eval_epoch_infos['text_loss']), eval_epoch_infos['rating_loss'], eval_loss))
         
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            with open(config.model_path, 'wb') as f:
+        if eval_loss < best_eval_loss:
+            best_eval_loss = eval_loss
+            with open(config.save_model_path, 'wb') as f:
                 torch.save(model, f)
         else:
             endure_count += 1
@@ -282,11 +293,11 @@ def trainer(model, config, optimizer, rating_criterion, text_criterion, train_da
                 config.logger.info('Exiting from early stop')
                 break
 
-    return {'train': train_infos, 'val': val_infos}
+    return {'train': train_infos, 'eval': eval_infos}
 
 
 def main(config):
-    set_seed(config.seed)
+    set_seed(config)
 
     os.makedirs(config.save_dir, exist_ok=True)
     config.log_file_path = os.path.join(config.save_dir, "log.txt")
@@ -330,16 +341,6 @@ def main(config):
     eval_df = test_eval_df.sample(frac=eval_size, random_state=config.seed)
     test_df = test_eval_df.drop(eval_df.index)
 
-    train_df['user_id'] = train_df['user_id'].apply(lambda u: user_dict[u])
-    train_df['item_id'] = train_df['item_id'].apply(lambda i: item_dict[i])
-    train_df['rating'] = train_df['rating'].astype(float)
-    test_df['user_id'] = test_df['user_id'].apply(lambda u: user_dict[u])
-    test_df['item_id'] = test_df['item_id'].apply(lambda i: item_dict[i])
-    test_df['rating'] = test_df['rating'].astype(float)
-    eval_df['user_id'] = eval_df['user_id'].apply(lambda u: user_dict[u])
-    eval_df['item_id'] = eval_df['item_id'].apply(lambda i: item_dict[i])
-    eval_df['rating'] = eval_df['rating'].astype(float)
-
     train_dataset = RatingReviewFeatureDataset(config, train_df, word_dict, user_dict, item_dict)
     eval_dataset = RatingReviewFeatureDataset(config, eval_df, word_dict, user_dict, item_dict)
     test_dataset = RatingReviewFeatureDataset(config, test_df, word_dict, user_dict, item_dict)
@@ -350,7 +351,7 @@ def main(config):
 
     model = PETER(
         peter_mask=config.peter_mask,
-        src_len=config.iput_length,
+        src_len=config.input_length,
         tgt_len=config.output_length,
         pad_idx=config.pad_idx,
         nuser=config.n_users, 
@@ -376,11 +377,11 @@ def main(config):
         config.logger.info("\n" + log)
 
     config.logger.info("Start training")
-    train_infos, eval_infos = trainer(model, config, train_dataloader, eval_dataloader, word_dict)
+    train_infos, eval_infos = trainer(model, config, train_dataloader, eval_dataloader)
     config.logger.info("Training done")
 
     config.logger.info("Start testing")
-    model.load(config.save_model_path)
+    model = torch.load(config.save_model_path)
     model.to(config.device)
     rating_scores, reviews_scores, output_df = generate_and_evaluate(model, config, test_dataloader, word_dict)
     config.logger.info("Testing done")
@@ -403,20 +404,51 @@ def main(config):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PErsonalized Transformer for Explainable Recommendation (PETER)')
 
+    parser.add_argument('--dataset_name', type=str, default="")
     parser.add_argument('--data_path', type=str, default=None,
                         help='path for loading data')
     parser.add_argument('--train_size', type=float, default=0.8,
                         help='train size')
-    parser.add_argument('--val_size', type=float, default=0.1,
+    parser.add_argument('--eval_size', type=float, default=0.1,
                         help='validation size')
     parser.add_argument('--test_size', type=float, default=0.1,
                         help='test size')
     parser.add_argument('--train_path', type=str, default="",
                         help='path for training data')
-    parser.add_argument('--val_path', type=str, default="",
+    parser.add_argument('--eval_path', type=str, default="",
                         help='path for validation data')
     parser.add_argument('--test_path', type=str, default="",
                         help='path for test data')
+    
+    parser.add_argument('--embedding_dim', type=int, default=512,
+                        help='size of embeddings')
+    parser.add_argument('--n_heads', type=int, default=2,
+                        help='the number of heads in the transformer')
+    parser.add_argument('--n_hiddens', type=int, default=2048,
+                        help='number of hidden units per layer')
+    parser.add_argument('--n_layers', type=int, default=2,
+                        help='number of layers')
+    parser.add_argument('--dropout', type=float, default=0.2,
+                        help='dropout applied to layers (0 = no dropout)')
+    
+    parser.add_argument('--clip', type=float, default=1.0,
+                        help='gradient clipping')
+    parser.add_argument('--vocab_size', type=int, default=20000,
+                        help='keep the most frequent words in the dict')
+    parser.add_argument('--endure_times', type=int, default=5,
+                        help='the maximum endure times of loss increasing on validation')
+    parser.add_argument('--lambda_rating', type=float, default=0.1,
+                        help='regularization on recommendation task')
+    parser.add_argument('--lambda_context', type=float, default=1.0,
+                        help='regularization on context prediction task')
+    parser.add_argument('--lambda_text', type=float, default=1.0,
+                        help='regularization on text generation task')
+    parser.add_argument('--peter_mask', action=argparse.BooleanOptionalAction, default=True,
+                        help='True to use peter mask; Otherwise left-to-right mask')
+    parser.add_argument('--use_features', action=argparse.BooleanOptionalAction, default=False,
+                        help='False: no feature; True: use the feature')
+    parser.add_argument('--review_length', type=int, default=128,
+                        help='number of words to generate for each sample')
 
     parser.add_argument('--lr', type=float, default=0.001,
                         help='learning rate')
@@ -439,17 +471,6 @@ if __name__ == '__main__':
                         help='whether to compute ranking metrics')
     parser.add_argument('--lang', type=str, default='en',
                         help='language')
-
-    parser.add_argument('--endure_times', type=int, default=5,
-                        help='the maximum endure times of loss increasing on validation')
-    parser.add_argument('--rating_reg', type=float, default=0.01,
-                        help='regularization on recommendation task')
-    parser.add_argument('--text_reg', type=float, default=1.0,
-                        help='regularization on text generation task')
-    parser.add_argument('--use_mf', action=argparse.BooleanOptionalAction, default=False,
-                        help='otherwise MLP')
-    parser.add_argument('--review_length', type=int, default=128,
-                        help='number of words to generate for each sample')
     
     parser.add_argument("--truncate_flag", action=argparse.BooleanOptionalAction)
     parser.set_defaults(truncate_flag=True)
@@ -459,6 +480,9 @@ if __name__ == '__main__':
     parser.set_defaults(delete_balise_flag=True)
     parser.add_argument("--delete_non_ascii_flag", action=argparse.BooleanOptionalAction)
     parser.set_defaults(delete_non_ascii_flag=True)
+
+    parser.add_argument("--verbose", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(verbose=True)
     
     config = parser.parse_args()
     main(config)
