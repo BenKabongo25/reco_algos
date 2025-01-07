@@ -72,7 +72,6 @@ class GRUDecoder(nn.Module):
         self.word_embeddings = nn.Embedding(n_tokens, d_model)
         self.gru = nn.GRU(d_model, hidden_size, batch_first=True)
         self.linear = nn.Linear(hidden_size, n_tokens)
-
         self.init_weights()
 
     def init_weights(self):
@@ -86,6 +85,27 @@ class GRUDecoder(nn.Module):
         output, hidden = self.gru(seq_emb, hidden)  # (batch_size, seq_len, hidden_size) vs. (nlayers, batch_size, hidden_size)
         decoded = self.linear(output)  # (batch_size, seq_len, n_tokens)
         return F.log_softmax(decoded, dim=-1), hidden
+    
+
+class NRTLoss(nn.Module):
+
+    def __init__(self, config):
+        super(NRTLoss, self).__init__()
+        self.config = config
+        self.mse_rating = nn.MSELoss()
+        self.nll_review = nn.NLLLoss(ignore_index=self.config.pad_idx)
+
+    def forward(self, rating, rating_hat, review, review_hat, parameters):
+        rating_loss = self.mse_rating(rating.float(), rating_hat.float())
+        review_loss = self.nll_review(review_hat.transpose(1, 2), review)
+        regularization_loss = torch.cat([param.view(-1) for param in parameters]).pow(2).sum()
+        total = self.config.lambda_rating * rating_loss + self.config.lambda_review * review_loss + self.config.lambda_reg * regularization_loss
+        return {
+            "total": total,
+            "rating": rating_loss,
+            "review": review_loss,
+            "regularization": regularization_loss
+        }
 
 
 class NRT(nn.Module):
@@ -100,18 +120,21 @@ class NRT(nn.Module):
         log_word_prob, _ = self.decoder(seq, hidden)
         return rating, log_word_prob  # (batch_size,) vs. (batch_size, seq_len, n_tokens)
     
-    def generate(self, U_ids, I_ids, review_length, bos_token):
+    def generate(self, U_ids, I_ids, word_dict, review_length):
+        bos_token = word_dict.word2idx['<bos>']
         inputs = torch.tensor([bos_token]).unsqueeze(0).to(U_ids.device)  # (1, 1)
         inputs = inputs.repeat(U_ids.size(0), 1) # (batch_size, 1)
         hidden = None
         ids = inputs
+        ratings = []
         for idx in range(review_length):
             # produce a word at each step
             if idx == 0:
                 rating, hidden = self.encoder(U_ids, I_ids)
+                ratings.extend(rating.cpu().detach().numpy())
                 logits, hidden = self.decoder(inputs, hidden)
             else:
-                logits, hidden, hidden_c = self.decoder(inputs, hidden, hidden_c)
+                logits, hidden = self.decoder(inputs, hidden)
             word_prob = logits.squeeze().exp()  # (batch_size, n_tokens)
             inputs = torch.argmax(word_prob, dim=1, keepdim=True)  # (batch_size, 1), pick the one with the largest probability
             ids = torch.cat([ids, inputs], 1)  # (batch_size, len++)
@@ -122,10 +145,12 @@ class NRT(nn.Module):
             review = word_dict.ids2tokens(ids[i])
             review = [word for word in review if word not in ['<bos>', '<eos>', '<pad>', '<unk>']]
             reviews_hat.append(" ".join(review))
-        return ids
+        return ratings, reviews_hat
     
     def save(self, save_model_path: str):
         torch.save(self.state_dict(), save_model_path)
 
     def load(self, save_model_path: str):
         self.load_state_dict(torch.load(save_model_path))
+
+    

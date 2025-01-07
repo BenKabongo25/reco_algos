@@ -137,14 +137,13 @@ def rating_and_evaluate(model, config, dataloader):
 
 def ids2tokens(ids, tokenizer, eos):
     text = tokenizer.decode(ids)
+    text = postprocess_text(text)
     tokens = []
     for token in text.split():
         if token == eos:
             break
         tokens.append(token)
-    text = " ".join(tokens)
-    text = postprocess_text(text)
-    return text
+    return " ".join(tokens)
 
 
 def generate_and_evaluate(model, config, tokenizer, dataloader):
@@ -193,10 +192,8 @@ def generate_and_evaluate(model, config, tokenizer, dataloader):
     output_df = pd.DataFrame({
         'user_id': users, 
         'item_id': items, 
-        'reference_review': reference_texts,
-        'prediction_review': predict_texts,
-        'reference_rating': reference_ratings,
-        'prediction_rating': predict_ratings
+        'reference': reference_texts,
+        'prediction': predict_texts
     })
     return {'text': review_scores, 'rating': ratings_scores, 'output': output_df}
 

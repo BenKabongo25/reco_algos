@@ -75,7 +75,7 @@ class Att2Seq(nn.Module):
         return logits  # (batch_size, seq_len, n_tokens)
     
     def generate(self, U_ids, I_ids, word_dict, review_length):
-        bos_token = word_dict['<bos>']
+        bos_token = word_dict.word2idx['<bos>']
         inputs = torch.tensor([bos_token]).unsqueeze(0).to(U_ids.device)  # (1, 1)
         inputs = inputs.repeat(U_ids.size(0), 1) # (batch_size, 1)
         hidden = None

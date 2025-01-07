@@ -22,7 +22,8 @@ def review_evaluation(predictions: List[str], references: List[str], config) -> 
 
     bertscore_metric = evaluate.load("bertscore")
     bertscore_results = bertscore_metric.compute(
-        predictions=predictions, references=references, lang=config.lang
+        predictions=predictions, references=references, lang=config.lang,
+        device=config.device
     )
     bertscore_results["precision"] = np.mean(bertscore_results["precision"])
     bertscore_results["recall"] = np.mean(bertscore_results["recall"])
@@ -30,10 +31,8 @@ def review_evaluation(predictions: List[str], references: List[str], config) -> 
 
     meteor_metric = evaluate.load("meteor")
     meteor_results = meteor_metric.compute(predictions=predictions, references=references)
-
     rouge_metric = evaluate.load("rouge")
     rouge_results = rouge_metric.compute(predictions=predictions, references=references)
-
     return {
         "n_examples": len(predictions),
         "meteor": float(meteor_results["meteor"]),

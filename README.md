@@ -44,11 +44,11 @@ The repository currently includes implementations of the following algorithms:
 2. Prepare the required data files, as described in the specific algorithm's `README.md` or comments.
 3. Run the main script to execute the algorithm. For example:
    ```bash
-   bash pepler.sh
+   bash main.sh
    ```
    or
    ```python
-   python main.py
+   python3 main.py [ARGUMENTS]
    ```
 
 ### Adding a New Algorithm

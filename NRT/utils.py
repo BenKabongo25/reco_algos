@@ -7,13 +7,22 @@ import numpy as np
 import random
 import re
 import torch
+import torch.nn.functional as F
 
 from nltk.stem.snowball import EnglishStemmer
 from nltk.stem import WordNetLemmatizer
 from typing import *
 
 
-def review_evaluation(predictions: List[str], references: List[str], config) -> Dict[str, Any]:
+def rating_evaluation(config: Any, predictions: List[float], references: List[float]) -> Dict[str, float]:
+    actual_ratings = torch.tensor(references, dtype=torch.float32).to(config.device)
+    predictions_tensor = torch.tensor(predictions, dtype=torch.float32).to(config.device)
+    rmse = torch.sqrt(F.mse_loss(predictions_tensor, actual_ratings))
+    mae = F.l1_loss(predictions_tensor, actual_ratings)
+    return {'rmse': rmse.item(), 'mae': mae.item()}
+
+
+def review_evaluation(config: Any, predictions: List[str], references: List[str]) -> Dict[str, Any]:
     references_list = [[ref] for ref in references]
 
     bleu_metric = evaluate.load("bleu")
@@ -22,7 +31,8 @@ def review_evaluation(predictions: List[str], references: List[str], config) -> 
 
     bertscore_metric = evaluate.load("bertscore")
     bertscore_results = bertscore_metric.compute(
-        predictions=predictions, references=references, lang=config.lang
+        predictions=predictions, references=references, lang=config.lang,
+        device=config.device
     )
     bertscore_results["precision"] = np.mean(bertscore_results["precision"])
     bertscore_results["recall"] = np.mean(bertscore_results["recall"])

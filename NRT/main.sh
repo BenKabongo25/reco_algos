@@ -4,14 +4,16 @@ python3 main.py \
     --train_size 0.8 \
     --test_size 0.1 \
     --eval_size 0.1 \
-    --embedding_dim 64 \
+    --d_model 512 \
     --hidden_size 512 \
-    --n_layers 2 \
-    --dropout 0.2 \
+    --n_layers_mlp 4 \
+    --lambda_rating 1.0 \
+    --lambda_review 1.0 \
+    --lambda_reg 0.001 \
     --review_length 128 \
     --vocab_size 20000 \
     --batch_size 64 \
-    --lr 0.002 \
+    --lr 0.001 \
     --n_epochs 50 \
     --seed 42 \
     --verbose \
