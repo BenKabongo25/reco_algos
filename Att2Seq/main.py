@@ -171,7 +171,7 @@ def main(config):
     config.device = device
 
     columns = ["user_id", "item_id", "review"]
-    data_df = pd.read_csv(config.data_path)[columns]
+    data_df = pd.read_csv(config.data_path).drop_duplicates()[columns]
     word_dict, user_dict, item_dict = build_dictionnaries(data_df)
     word_dict.keep_most_frequent(config.vocab_size)
 

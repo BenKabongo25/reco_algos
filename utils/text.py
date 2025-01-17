@@ -83,22 +83,16 @@ def preprocess_text(text: str, args: Any, max_length: int=-1) -> str:
     return text
 
 
-def postprocess_text(text: str) -> str:
-    # https://github.com/yoonkim/CNN_sentence/blob/master/process_data.py
-    text = re.sub('\'s', ' \'s', text)
-    text = re.sub('\'m', ' \'m', text)
-    text = re.sub('\'ve', ' \'ve', text)
-    text = re.sub('n\'t', ' n\'t', text)
-    text = re.sub('\'re', ' \'re', text)
-    text = re.sub('\'d', ' \'d', text)
-    text = re.sub('\'ll', ' \'ll', text)
-    text = re.sub('\(', ' ( ', text)
-    text = re.sub('\)', ' ) ', text)
-    text = re.sub(',+', ' , ', text)
-    text = re.sub(':+', ' , ', text)
-    text = re.sub(';+', ' . ', text)
-    text = re.sub('\.+', ' . ', text)
-    text = re.sub('!+', ' ! ', text)
-    text = re.sub('\?+', ' ? ', text)
-    text = re.sub(' +', ' ', text).strip()
+def postprocess_text(text: str, special_tokens=[]) -> str:
+    for token in special_tokens:
+        text = text.replace(token, "")
+    text = re.sub(r" \'(s|m|ve|d|ll|re)", r"'\1", text)
+    text = re.sub(r" \(", "(", text)
+    text = re.sub(r" \)", ")", text)
+    text = re.sub(r" ,", ",", text)
+    text = re.sub(r" \.", ".", text)
+    text = re.sub(r" !", "!", text)
+    text = re.sub(r" \?", "?", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
     return text
+

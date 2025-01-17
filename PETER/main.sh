@@ -1,26 +1,28 @@
 python3 main.py \
-    --dataset_name Hotels \
     --data_path /home/b.kabongo/aspects_datasets/Hotels/data.csv \
     --train_size 0.8 \
     --eval_size 0.1 \
     --test_size 0.1 \
-    --seed 42 \
-    --embedding_dim 512 \
-    --n_heads 2 \
-    --n_hiddens 2048 \
-    --n_layers 2 \
+    --lang en \
+    --emsize 512 \
+    --nhead 2 \
+    --nhid 2048 \
+    --nlayers 2 \
     --dropout 0.2 \
-    --vocab_size 20000 \
-    --lambda_rating 0.1 \
-    --lambda_text 1.0 \
-    --lambda_context 1.0 \
-    --peter_mask \
-    --lr 0.001 \
-    --n_epochs 50 \
+    --lr 1.0 \
+    --clip 1.0 \
+    --epochs 100 \
     --batch_size 32 \
-    --save_dir /home/b.kabongo/exps/Hotels/PEPLER/ \
-    --truncate_flag \
-    --review_length 128 \
-    --lower_flag \
-    --delete_balise_flag \
-    --delete_non_ascii_flag \
+    --seed 42 \
+    --cuda \
+    --log_interval 200 \
+    --checkpoint /home/b.kabongo/exps/Hotels/PETER/ \
+    --outf output.txt \
+    --vocab_size 20000 \
+    --endure_times 5 \
+    --rating_reg 0.1 \
+    --context_reg 1.0 \
+    --text_reg 1.0 \
+    --peter_mask \
+    --no-use_feature \
+    --words 128 \

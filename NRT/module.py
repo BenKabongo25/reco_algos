@@ -95,16 +95,14 @@ class NRTLoss(nn.Module):
         self.mse_rating = nn.MSELoss()
         self.nll_review = nn.NLLLoss(ignore_index=self.config.pad_idx)
 
-    def forward(self, rating, rating_hat, review, review_hat, parameters):
+    def forward(self, rating, rating_hat, review, review_hat):
         rating_loss = self.mse_rating(rating.float(), rating_hat.float())
         review_loss = self.nll_review(review_hat.transpose(1, 2), review)
-        regularization_loss = torch.cat([param.view(-1) for param in parameters]).pow(2).sum()
-        total = self.config.lambda_rating * rating_loss + self.config.lambda_review * review_loss + self.config.lambda_reg * regularization_loss
+        total = self.config.lambda_rating * rating_loss + self.config.lambda_review * review_loss
         return {
             "total": total,
             "rating": rating_loss,
-            "review": review_loss,
-            "regularization": regularization_loss
+            "review": review_loss
         }
 
 

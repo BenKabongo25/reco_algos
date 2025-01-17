@@ -1,180 +1,139 @@
-# Ben Kabongo
-# December 2024
-
-# PEPLER for review generation
-# https://dl.acm.org/doi/pdf/10.1145/3580488
-
-
-import argparse
 import json
-import logging
-import math
 import pandas as pd
 import os
-import sys
+import math
 import torch
+import argparse
 import torch.nn as nn
-
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, parent_dir)
-
 from module import PETER
-from data import RatingReviewFeatureDataset, build_dictionnaries
-
-from utils.evaluation import rating_evaluation_pytorch, review_evaluation
-from utils.text import postprocess_text
-from utils.functions import set_seed
+from utils import *
 
 
-def empty_cache():
-    with torch.no_grad():
-        torch.cuda.empty_cache()
+parser = argparse.ArgumentParser(description='PErsonalized Transformer for Explainable Recommendation (PETER)')
+parser.add_argument('--data_path', type=str, default="/home/b.kabongo/aspects_datasets/Hotels/data.csv",
+                    help='path for loading the pickle data')
+parser.add_argument('--train_size', type=float, default=0.8,
+                    help='train size for splitting the data')
+parser.add_argument('--eval_size', type=float, default=0.1,
+                    help='eval size for splitting the data')
+parser.add_argument('--test_size', type=float, default=0.1,
+                    help='test size for splitting the data')
+parser.add_argument('--lang', type=str, default='en',
+                    help='language for the data')
+parser.add_argument('--index_dir', type=str, default=None,
+                    help='load indexes')
+parser.add_argument('--emsize', type=int, default=512,
+                    help='size of embeddings')
+parser.add_argument('--nhead', type=int, default=2,
+                    help='the number of heads in the transformer')
+parser.add_argument('--nhid', type=int, default=2048,
+                    help='number of hidden units per layer')
+parser.add_argument('--nlayers', type=int, default=2,
+                    help='number of layers')
+parser.add_argument('--dropout', type=float, default=0.2,
+                    help='dropout applied to layers (0 = no dropout)')
+parser.add_argument('--lr', type=float, default=1.0,
+                    help='initial learning rate')
+parser.add_argument('--clip', type=float, default=1.0,
+                    help='gradient clipping')
+parser.add_argument('--epochs', type=int, default=100,
+                    help='upper epoch limit')
+parser.add_argument('--batch_size', type=int, default=32,
+                    help='batch size')
+parser.add_argument('--seed', type=int, default=42,
+                    help='random seed')
+parser.add_argument('--cuda', action=argparse.BooleanOptionalAction,
+                    help='use CUDA')
+parser.set_defaults(cuda=True)
+parser.add_argument('--log_interval', type=int, default=200,
+                    help='report interval')
+parser.add_argument('--checkpoint', type=str, default="/home/b.kabongo/exps/Hotels/PETER/",
+                    help='directory to save the final model')
+parser.add_argument('--outf', type=str, default='output.txt',
+                    help='output file for generated text')
+parser.add_argument('--vocab_size', type=int, default=20000,
+                    help='keep the most frequent words in the dict')
+parser.add_argument('--endure_times', type=int, default=5,
+                    help='the maximum endure times of loss increasing on validation')
+parser.add_argument('--rating_reg', type=float, default=0.1,
+                    help='regularization on recommendation task')
+parser.add_argument('--context_reg', type=float, default=1.0,
+                    help='regularization on context prediction task')
+parser.add_argument('--text_reg', type=float, default=1.0,
+                    help='regularization on text generation task')
+parser.add_argument('--peter_mask', action=argparse.BooleanOptionalAction,
+                    help='True to use peter mask; Otherwise left-to-right mask')
+parser.set_defaults(peter_mask=True)
+parser.add_argument('--use_feature', action=argparse.BooleanOptionalAction,
+                    help='False: no feature; True: use the feature')
+parser.set_defaults(use_feature=False)
+parser.add_argument('--words', type=int, default=128,
+                    help='number of words to generate for each sample')
+args = parser.parse_args()
 
+if args.data_path is None:
+    parser.error('--data_path should be provided for loading data')
+#if args.index_dir is None:
+#    parser.error('--index_dir should be provided for loading data splits')
 
-def train(model, config, optimizer, rating_criterion, text_criterion, dataloader):
-    model.train()
+print('-' * 40 + 'ARGUMENTS' + '-' * 40)
+for arg in vars(args):
+    print('{:40} {}'.format(arg, getattr(args, arg)))
+print('-' * 40 + 'ARGUMENTS' + '-' * 40)
 
-    total_loss = 0.
-    text_loss = 0.
-    context_loss = 0.
-    rating_loss = 0.
+# Set the random seed manually for reproducibility.
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    if not args.cuda:
+        print(now_time() + 'WARNING: You have a CUDA device, so you should probably run with --cuda')
+device = torch.device('cuda' if args.cuda else 'cpu')
 
-    progress_bar = tqdm(enumerate(dataloader, 1), desc="Training", colour="cyan", total=len(dataloader))
-    for batch_idx, batch in progress_bar:
-        empty_cache()
-        user = torch.LongTensor(batch['user_id']).to(config.device)
-        item = torch.LongTensor(batch['item_id']).to(config.device)
-        rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-        #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
-        seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
+if not os.path.exists(args.checkpoint):
+    os.makedirs(args.checkpoint)
+model_path = os.path.join(args.checkpoint, 'model.pt')
+prediction_path = os.path.join(args.checkpoint, args.outf)
 
-        if config.use_features:
-            features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
-            text = torch.cat([features, seq[:-1]], 0) 
-        else:
-            text = seq[:-1]
+###############################################################################
+# Load data
+###############################################################################
 
-        log_word_prob, log_context_dis, rating_p, _ = model(user, item, text)  # (tgt_len, batch_size, ntoken) vs. (batch_size, ntoken) vs. (batch_size,)
-        #print(log_word_prob.shape, log_context_dis.shape, rating_p.shape)
-        context_dis = log_context_dis.unsqueeze(0).repeat((config.review_length, 1, 1))  # (batch_size, ntoken) -> (tgt_len - 1, batch_size, ntoken)
-        #print(context_dis.shape, seq[1:-1].shape)
-        c_loss = text_criterion(context_dis.view(-1, config.n_tokens), seq[1:-1].reshape((-1,)))
-        r_loss = rating_criterion(rating_p, rating)
-        t_loss = text_criterion(log_word_prob.view(-1, config.n_tokens), seq[1:].reshape((-1,)))
-        loss = config.lambda_text * t_loss + config.lambda_context * c_loss + config.lambda_rating * r_loss
+print(now_time() + 'Loading data')
+columns = ['user_id', 'item_id', 'rating', 'review']
+data_df = pd.read_csv(args.data_path).drop_duplicates()[columns]
+#corpus = DataLoader(args.data_path, args.index_dir, args.vocab_size)
+corpus = DataLoaderFromDataFrameForReviewGeneration(
+    data_df, args.vocab_size, train_size=args.train_size, eval=args.eval_size, 
+    test_size=args.test_size, seed=args.seed
+)
+word2idx = corpus.word_dict.word2idx
+idx2word = corpus.word_dict.idx2word
+feature_set = corpus.feature_set
+train_data = Batchify(corpus.train, word2idx, args.words, args.batch_size, shuffle=True)
+val_data = Batchify(corpus.valid, word2idx, args.words, args.batch_size)
+test_data = Batchify(corpus.test, word2idx, args.words, args.batch_size)
 
-        optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip)
-        optimizer.step()
+###############################################################################
+# Build the model
+###############################################################################
 
-        total_loss += loss.item()
-        text_loss += t_loss.item()
-        context_loss += c_loss.item()
-        rating_loss += r_loss.item()
-        
-    total_loss /= len(dataloader)
-    text_loss /= len(dataloader)
-    context_loss /= len(dataloader)
-    rating_loss /= len(dataloader)
-    return {'total_loss': total_loss, 'text_loss': text_loss, 'context_loss': context_loss, 'rating_loss': rating_loss}
+if args.use_feature:
+    src_len = 2 + train_data.feature.size(1)  # [u, i, f]
+else:
+    src_len = 2  # [u, i]
+tgt_len = args.words + 1  # added <bos> or <eos>
+ntokens = len(corpus.word_dict)
+nuser = len(corpus.user_dict)
+nitem = len(corpus.item_dict)
+pad_idx = word2idx['<pad>']
+model = PETER(args.peter_mask, src_len, tgt_len, pad_idx, nuser, nitem, ntokens, args.emsize, args.nhead, args.nhid, args.nlayers, args.dropout).to(device)
+text_criterion = nn.NLLLoss(ignore_index=pad_idx)  # ignore the padding when computing loss
+rating_criterion = nn.MSELoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.25)
 
-
-def evaluate(model, config, rating_criterion, text_criterion, dataloader):
-    model.eval()
-
-    total_loss = 0.
-    text_loss = 0.
-    context_loss = 0.
-    rating_loss = 0.
-
-    progress_bar = tqdm(enumerate(dataloader, 1), desc="Evaluation", colour="cyan", total=len(dataloader))
-    with torch.no_grad():
-        for batch_idx, batch in progress_bar:
-            empty_cache()
-            user = torch.LongTensor(batch['user_id']).to(config.device)
-            item = torch.LongTensor(batch['item_id']).to(config.device)
-            rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-            #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
-            seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
-
-            if config.use_features:
-                features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
-                text = torch.cat([features, seq[:-1]], 0) 
-            else:
-                text = seq[:-1]
-
-            log_word_prob, log_context_dis, rating_p, _ = model(user, item, text)  # (tgt_len, batch_size, ntoken) vs. (batch_size, ntoken) vs. (batch_size,)
-            context_dis = log_context_dis.unsqueeze(0).repeat((config.review_length + 1 - 1, 1, 1))  # (batch_size, ntoken) -> (tgt_len - 1, batch_size, ntoken)
-            c_loss = text_criterion(context_dis.view(-1, config.n_tokens), seq[1:-1].reshape((-1,)))
-            r_loss = rating_criterion(rating_p, rating)
-            t_loss = text_criterion(log_word_prob.view(-1, config.n_tokens), seq[1:].reshape((-1,)))
-            loss = config.lambda_text * t_loss + config.lambda_context * c_loss + config.lambda_rating * r_loss
-
-            total_loss += loss.item()
-            text_loss += t_loss.item()
-            context_loss += c_loss.item()
-            rating_loss += r_loss.item()
-        
-    total_loss /= len(dataloader)
-    text_loss /= len(dataloader)
-    context_loss /= len(dataloader)
-    rating_loss /= len(dataloader)
-    return {'total_loss': total_loss, 'text_loss': text_loss, 'context_loss': context_loss, 'rating_loss': rating_loss}
-
-
-def rating_and_evaluate(model, config, dataloader):
-    model.eval()
-    users = []
-    items = []
-    reference_ratings = []
-    predict_ratings = []
-
-    progress_bar = tqdm(enumerate(dataloader, 1), desc="Rating eval", colour="green", total=len(dataloader))
-    with torch.no_grad():
-        for batch_idx, batch in progress_bar:
-            empty_cache()
-            user = torch.LongTensor(batch['user_id']).to(config.device)
-            item = torch.LongTensor(batch['item_id']).to(config.device)
-            rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-            #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
-            seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
-
-            if config.use_features:
-                features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
-                text = torch.cat([features, seq[:-1]], 0) 
-            else:
-                text = seq[:-1]
-
-            _, _, rating_p, _ = model(user, item, text)
-
-            reference_ratings.extend(rating.cpu().detach().numpy().tolist())
-            predict_ratings.extend(rating_p.cpu().detach().numpy().tolist())
-            users.extend(user.cpu().detach().numpy().tolist())
-            items.extend(item.cpu().detach().numpy().tolist())
-
-    ratings_scores = rating_evaluation_pytorch(config, predictions=predict_ratings, references=reference_ratings)
-    output_df = pd.DataFrame({
-        'user_id': users, 
-        'item_id': items, 
-        'reference': reference_ratings,
-        'prediction': predict_ratings
-    })
-    return {'rating': ratings_scores, 'output': output_df}
-
-
-def ids2tokens(ids, word_dict, eos):
-    tokens = []
-    for i in ids:
-        if i == eos:
-            break
-        tokens.append(word_dict.idx2word[i])
-    text = " ".join(tokens)
-    text = postprocess_text(text)
-    return text
+###############################################################################
+# Training code
+###############################################################################
 
 
 def predict(log_context_dis, topk):
@@ -183,306 +142,224 @@ def predict(log_context_dis, topk):
         context = torch.argmax(word_prob, dim=1, keepdim=True)  # (batch_size, 1)
     else:
         context = torch.topk(word_prob, topk, 1)[1]  # (batch_size, topk)
-    return context 
+    return context  # (batch_size, topk)
 
 
-def generate_and_evaluate(model, config, word_dict, dataloader):
+def train(data):
+    # Turn on training mode which enables dropout.
+    model.train()
+    context_loss = 0.
+    text_loss = 0.
+    rating_loss = 0.
+    total_sample = 0
+    while True:
+        user, item, rating, seq, feature = data.next_batch()  # (batch_size, seq_len), data.step += 1
+        batch_size = user.size(0)
+        user = user.to(device)  # (batch_size,)
+        item = item.to(device)
+        rating = rating.to(device)
+        seq = seq.t().to(device)  # (tgt_len + 1, batch_size)
+        feature = feature.t().to(device)  # (1, batch_size)
+        if args.use_feature:
+            text = torch.cat([feature, seq[:-1]], 0)  # (src_len + tgt_len - 2, batch_size)
+        else:
+            text = seq[:-1]  # (src_len + tgt_len - 2, batch_size)
+        # Starting each batch, we detach the hidden state from how it was previously produced.
+        # If we didn't, the model would try backpropagating all the way to start of the dataset.
+        optimizer.zero_grad()
+        log_word_prob, log_context_dis, rating_p, _ = model(user, item, text)  # (tgt_len, batch_size, ntoken) vs. (batch_size, ntoken) vs. (batch_size,)
+        context_dis = log_context_dis.unsqueeze(0).repeat((tgt_len - 1, 1, 1))  # (batch_size, ntoken) -> (tgt_len - 1, batch_size, ntoken)
+        c_loss = text_criterion(context_dis.view(-1, ntokens), seq[1:-1].reshape((-1,)))
+        r_loss = rating_criterion(rating_p, rating)
+        t_loss = text_criterion(log_word_prob.view(-1, ntokens), seq[1:].reshape((-1,)))
+        loss = args.text_reg * t_loss + args.context_reg * c_loss + args.rating_reg * r_loss
+        loss.backward()
+
+        # `clip_grad_norm` helps prevent the exploding gradient problem.
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        optimizer.step()
+
+        context_loss += batch_size * c_loss.item()
+        text_loss += batch_size * t_loss.item()
+        rating_loss += batch_size * r_loss.item()
+        total_sample += batch_size
+
+        if data.step % args.log_interval == 0 or data.step == data.total_step:
+            cur_c_loss = context_loss / total_sample
+            cur_t_loss = text_loss / total_sample
+            cur_r_loss = rating_loss / total_sample
+            print(now_time() + 'context ppl {:4.4f} | text ppl {:4.4f} | rating loss {:4.4f} | {:5d}/{:5d} batches'.format(
+                math.exp(cur_c_loss), math.exp(cur_t_loss), cur_r_loss, data.step, data.total_step))
+            context_loss = 0.
+            text_loss = 0.
+            rating_loss = 0.
+            total_sample = 0
+        if data.step == data.total_step:
+            break
+
+
+def evaluate(data):
+    # Turn on evaluation mode which disables dropout.
     model.eval()
-
-    users = []
-    items = []
-    reference_texts = []
-    reference_ratings = []
-    predict_texts = []
-    predict_ratings = []
-    predict_contexts = []
-
-    progress_bar = tqdm(enumerate(dataloader, 1), desc="Generate", colour="green", total=len(dataloader))
+    context_loss = 0.
+    text_loss = 0.
+    rating_loss = 0.
+    total_sample = 0
     with torch.no_grad():
-        for batch_idx, batch in progress_bar:
-            empty_cache()
-            user = torch.LongTensor(batch['user_id']).to(config.device)
-            item = torch.LongTensor(batch['item_id']).to(config.device)
-            rating = torch.tensor(batch['rating'].clone().detach(), dtype=torch.float32).to(config.device)
-            #seq = torch.LongTensor(batch['review_ids']).transpose(1, 0).to(config.device)
-            seq = torch.stack(batch['review_ids'], dim=1).to(dtype=torch.long, device=config.device).transpose(1, 0)
-            review = batch['review']
+        while True:
+            user, item, rating, seq, feature = data.next_batch()  # (batch_size, seq_len), data.step += 1
+            batch_size = user.size(0)
+            user = user.to(device)  # (batch_size,)
+            item = item.to(device)
+            rating = rating.to(device)
+            seq = seq.t().to(device)  # (tgt_len + 1, batch_size)
+            feature = feature.t().to(device)  # (1, batch_size)
+            if args.use_feature:
+                text = torch.cat([feature, seq[:-1]], 0)  # (src_len + tgt_len - 2, batch_size)
+            else:
+                text = seq[:-1]  # (src_len + tgt_len - 2, batch_size)
+            log_word_prob, log_context_dis, rating_p, _ = model(user, item, text)  # (tgt_len, batch_size, ntoken) vs. (batch_size, ntoken) vs. (batch_size,)
+            context_dis = log_context_dis.unsqueeze(0).repeat((tgt_len - 1, 1, 1))  # (batch_size, ntoken) -> (tgt_len - 1, batch_size, ntoken)
+            c_loss = text_criterion(context_dis.view(-1, ntokens), seq[1:-1].reshape((-1,)))
+            r_loss = rating_criterion(rating_p, rating)
+            t_loss = text_criterion(log_word_prob.view(-1, ntokens), seq[1:].reshape((-1,)))
 
-            bos = seq[:, 0].unsqueeze(0) # (1, batch_size)
-            if config.use_features:
-                features = torch.LongTensor(batch['features']).transpose(1, 0).to(config.device)
-                text = torch.cat([features, bos], 0)  # (src_len - 1, batch_size)
+            context_loss += batch_size * c_loss.item()
+            text_loss += batch_size * t_loss.item()
+            rating_loss += batch_size * r_loss.item()
+            total_sample += batch_size
+
+            if data.step == data.total_step:
+                break
+    return context_loss / total_sample, text_loss / total_sample, rating_loss / total_sample
+
+
+def generate(data):
+    # Turn on evaluation mode which disables dropout.
+    model.eval()
+    idss_predict = []
+    context_predict = []
+    rating_predict = []
+    with torch.no_grad():
+        while True:
+            user, item, rating, seq, feature = data.next_batch()
+            user = user.to(device)  # (batch_size,)
+            item = item.to(device)
+            bos = seq[:, 0].unsqueeze(0).to(device)  # (1, batch_size)
+            feature = feature.t().to(device)  # (1, batch_size)
+            if args.use_feature:
+                text = torch.cat([feature, bos], 0)  # (src_len - 1, batch_size)
             else:
                 text = bos  # (src_len - 1, batch_size)
-
             start_idx = text.size(0)
-            for idx in range(config.review_length):
+            for idx in range(args.words):
                 # produce a word at each step
                 if idx == 0:
                     log_word_prob, log_context_dis, rating_p, _ = model(user, item, text, False)  # (batch_size, ntoken) vs. (batch_size, ntoken) vs. (batch_size,)
-                    predict_ratings.extend(rating_p.cpu().detach().numpy().tolist())
-                    context = predict(log_context_dis, topk=1)  # (batch_size, 1)
-                    predict_contexts.extend(context.tolist())
+                    rating_predict.extend(rating_p.tolist())
+                    context = predict(log_context_dis, topk=args.words)  # (batch_size, words)
+                    context_predict.extend(context.tolist())
                 else:
                     log_word_prob, _, _, _ = model(user, item, text, False, False, False)  # (batch_size, ntoken)
                 word_prob = log_word_prob.exp()  # (batch_size, ntoken)
                 word_idx = torch.argmax(word_prob, dim=1)  # (batch_size,), pick the one with the largest probability
                 text = torch.cat([text, word_idx.unsqueeze(0)], 0)  # (len++, batch_size)
             ids = text[start_idx:].t().tolist()  # (batch_size, seq_len)
+            idss_predict.extend(ids)
 
-            users.extend(user.cpu().detach().numpy().tolist())
-            items.extend(item.cpu().detach().numpy().tolist())
-            reference_texts.extend(review)
-            reference_ratings.extend(rating.cpu().detach().numpy().tolist())
-
-            review_p = [ids2tokens(rids, word_dict, config.eos_idx) for rids in ids]
-            predict_texts.extend(review_p)
-
-    ratings_scores = rating_evaluation_pytorch(config, predictions=predict_ratings, references=reference_ratings)
-    review_scores = review_evaluation(config, predictions=predict_texts, references=reference_texts)
-    output_df = pd.DataFrame({
-        'user_id': users, 
-        'item_id': items, 
-        'reference_review': reference_texts,
-        'prediction_review': predict_texts,
-        'reference_rating': reference_ratings,
-        'prediction_rating': predict_ratings,
-    })
-    return {'text': review_scores, 'rating': ratings_scores, 'output': output_df}
-
-
-def trainer(model, config, train_dataloader, eval_dataloader):
-    text_criterion = nn.NLLLoss(ignore_index=config.pad_idx)
-    rating_criterion = nn.MSELoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=config.lr)
-
-    best_eval_loss = float('inf')
-    endure_count = 0
-
-    train_infos = {"text_loss": [], "rating_loss": [], "context_loss": [], "total_loss": []}
-    eval_infos = {"text_loss": [], "rating_loss": [], "context_loss": [], "total_loss": []}
-
-    for epoch in range(1, config.n_epochs + 1):
-        config.logger.info('epoch {}'.format(epoch))
-
-        train_epoch_infos = train(model, config, optimizer, rating_criterion, text_criterion, train_dataloader)
-        eval_epoch_infos = evaluate(model, config, rating_criterion, text_criterion, eval_dataloader)
-
-        train_infos['text_loss'].append(train_epoch_infos['text_loss'])
-        train_infos['rating_loss'].append(train_epoch_infos['rating_loss'])
-        train_infos['context_loss'].append(train_epoch_infos['context_loss'])
-        train_infos['total_loss'].append(train_epoch_infos['total_loss'])
-        eval_infos['text_loss'].append(eval_epoch_infos['text_loss'])
-        eval_infos['rating_loss'].append(eval_epoch_infos['rating_loss'])
-        eval_infos['context_loss'].append(eval_epoch_infos['context_loss'])
-        eval_infos['total_loss'].append(eval_epoch_infos['total_loss'])
-
-        eval_loss = eval_epoch_infos['total_loss']
-
-        config.logger.info('text ppl {:4.4f} | rating loss {:4.4f} | valid loss {:4.4f} on validation'.format(
-            math.exp(eval_epoch_infos['text_loss']), eval_epoch_infos['rating_loss'], eval_loss))
-        
-        if eval_loss < best_eval_loss:
-            best_eval_loss = eval_loss
-            with open(config.save_model_path, 'wb') as f:
-                torch.save(model, f)
-        else:
-            endure_count += 1
-            config.logger.info('Endured {} time(s)'.format(endure_count))
-            if endure_count == config.endure_times:
-                config.logger.info('Exiting from early stop')
+            if data.step == data.total_step:
                 break
 
-    return {'train': train_infos, 'eval': eval_infos}
-
-
-def main(config):
-    set_seed(config)
-
-    os.makedirs(config.save_dir, exist_ok=True)
-    config.log_file_path = os.path.join(config.save_dir, "log.txt")
-    config.res_file_path = os.path.join(config.save_dir, "res.json")
-    config.save_model_path = os.path.join(config.save_dir, "model.pth")
-
-    logger = logging.getLogger("PETER" + config.dataset_name)
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    file_handler = logging.FileHandler(config.log_file_path)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    config.logger = logger
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config.device = device
-
-    columns = ["user_id", "item_id", "rating", "review"]
-    data_df = pd.read_csv(config.data_path)[columns]
-    word_dict, user_dict, item_dict = build_dictionnaries(data_df)
-    word_dict.keep_most_frequent(config.vocab_size)
-
-    config.n_users = len(user_dict)
-    config.n_items = len(item_dict)
-    config.n_tokens = len(word_dict)
-    config.bos_idx = word_dict.word2idx['<bos>']
-    config.pad_idx = word_dict.word2idx['<pad>']
-    config.eos_idx = word_dict.word2idx['<eos>']
-
-    config.input_length = 2 # [u, i]
-    if config.use_features:
-        config.input_length = 2 + config.n_features  # [u, i, f]
-    config.output_length = config.review_length + 1  # [r1, r2, ..., rL, <eos>]
-
-    train_df = data_df.sample(frac=config.train_size, random_state=config.seed)
-    test_eval_df = data_df.drop(train_df.index)
-    eval_size = config.eval_size / (config.eval_size + config.test_size)
-    eval_df = test_eval_df.sample(frac=eval_size, random_state=config.seed)
-    test_df = test_eval_df.drop(eval_df.index)
-
-    train_dataset = RatingReviewFeatureDataset(config, train_df, word_dict, user_dict, item_dict)
-    eval_dataset = RatingReviewFeatureDataset(config, eval_df, word_dict, user_dict, item_dict)
-    test_dataset = RatingReviewFeatureDataset(config, test_df, word_dict, user_dict, item_dict)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=config.batch_size, shuffle=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False)
-
-    model = PETER(
-        peter_mask=config.peter_mask,
-        src_len=config.input_length,
-        tgt_len=config.output_length,
-        pad_idx=config.pad_idx,
-        nuser=config.n_users, 
-        nitem=config.n_items, 
-        ntoken=config.n_tokens, 
-        emsize=config.embedding_dim, 
-        nhead=config.n_heads, 
-        nhid=config.n_hiddens,
-        nlayers=config.n_layers,
-        dropout=config.dropout,
+    # rating
+    #predicted_rating = [(r, p) for (r, p) in zip(data.rating.tolist(), rating_predict)]
+    #RMSE = root_mean_square_error(predicted_rating, corpus.max_rating, corpus.min_rating)
+    #print(now_time() + 'RMSE {:7.4f}'.format(RMSE))
+    #MAE = mean_absolute_error(predicted_rating, corpus.max_rating, corpus.min_rating)
+    #print(now_time() + 'MAE {:7.4f}'.format(MAE))
+    rating_reference = data.rating.tolist()
+    rating_scores = rating_evaluation(
+        args, predictions=rating_predict, references=rating_reference, 
+        metrics=[RMSE, MAE],
     )
-    if config.load_model:
-        config.logger.info("Load model")
-        model.load(config.save_model_path)
-    model.to(config.device)
+    with open(os.path.join(args.checkpoint, 'rating_results.json'), 'w', encoding='utf-8') as f:
+        json.dump(rating_scores, f)
 
-    if config.verbose:
-        log = "PETER\n\n"
-        for k, v in vars(config).items():
-            log += f"{k}: {v}\n"
-        log += f"{'-' * 80}\n\n"
-        log += f"{train_df.head(5)}\n"
-        config.logger.info("\n" + log)
+    # text
+    tokens_test = [ids2tokens(ids[1:], word2idx, idx2word) for ids in data.seq.tolist()]
+    tokens_predict = [ids2tokens(ids, word2idx, idx2word) for ids in idss_predict]
+    review_scores = review_evaluation(
+        args, predictions=tokens_predict, references=tokens_test,
+        metrics=[BLEU, METEOR, ROUGE, BERTSCORE]
+    )
+    with open(os.path.join(args.checkpoint, 'review_results.json'), 'w', encoding='utf-8') as f:
+        json.dump(review_scores, f)
 
-    config.logger.info("Start training")
-    train_infos, eval_infos = trainer(model, config, train_dataloader, eval_dataloader)
-    config.logger.info("Training done")
+    #BLEU1 = bleu_score(tokens_test, tokens_predict, n_gram=1, smooth=False)
+    #print(now_time() + 'BLEU-1 {:7.4f}'.format(BLEU1))
+    #BLEU4 = bleu_score(tokens_test, tokens_predict, n_gram=4, smooth=False)
+    #print(now_time() + 'BLEU-4 {:7.4f}'.format(BLEU4))
+    #USR, USN = unique_sentence_percent(tokens_predict)
+    #print(now_time() + 'USR {:7.4f} | USN {:7}'.format(USR, USN))
+    #feature_batch = feature_detect(tokens_predict, feature_set)
+    #DIV = feature_diversity(feature_batch)  # time-consuming
+    #print(now_time() + 'DIV {:7.4f}'.format(DIV))
+    #FCR = feature_coverage_ratio(feature_batch, feature_set)
+    #print(now_time() + 'FCR {:7.4f}'.format(FCR))
+    #feature_test = [idx2word[i] for i in data.feature.squeeze(1).tolist()]  # ids to words
+    #FMR = feature_matching_ratio(feature_batch, feature_test)
+    #print(now_time() + 'FMR {:7.4f}'.format(FMR))
+    text_test = [' '.join(tokens) for tokens in tokens_test]
+    text_predict = [' '.join(tokens) for tokens in tokens_predict]
+    tokens_context = [' '.join([idx2word[i] for i in ids]) for ids in context_predict]
+    #ROUGE = rouge_score(text_test, text_predict)  # a dictionary
+    #for (k, v) in ROUGE.items():
+        #print(now_time() + '{} {:7.4f}'.format(k, v))
+    text_out = ''
+    for (real, ctx, fake) in zip(text_test, tokens_context, text_predict):
+        text_out += '{}\n{}\n{}\n\n'.format(real, ctx, fake)
+    return text_out
 
-    config.logger.info("Start testing")
-    model = torch.load(config.save_model_path)
-    model.to(config.device)
-    rating_scores, reviews_scores, output_df = generate_and_evaluate(model, config, test_dataloader, word_dict)
-    config.logger.info("Testing done")
-    test_infos = {
-        "rating": rating_scores,
-        "review": reviews_scores
-    }
 
-    config.logger.info("Save results")
-    output_df.to_csv(os.path.join(config.save_dir, "output.csv"), index=False)
-    results = {"test": test_infos, "train": train_infos, "eval": eval_infos}
-    config.logger.info(f"Results: {results}")
-    with open(config.res_file_path, "w") as res_file:
-        json.dump(results, res_file)
-    config.logger.info("Results saved")
+# Loop over epochs.
+best_val_loss = float('inf')
+endure_count = 0
+for epoch in range(1, args.epochs + 1):
+    print(now_time() + 'epoch {}'.format(epoch))
+    train(train_data)
+    val_c_loss, val_t_loss, val_r_loss = evaluate(val_data)
+    if args.rating_reg == 0:
+        val_loss = val_t_loss
+    else:
+        val_loss = val_t_loss + val_r_loss
+    print(now_time() + 'context ppl {:4.4f} | text ppl {:4.4f} | rating loss {:4.4f} | valid loss {:4.4f} on validation'.format(
+        math.exp(val_c_loss), math.exp(val_t_loss), val_r_loss, val_loss))
+    # Save the model if the validation loss is the best we've seen so far.
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        with open(model_path, 'wb') as f:
+            torch.save(model, f)
+    else:
+        endure_count += 1
+        print(now_time() + 'Endured {} time(s)'.format(endure_count))
+        if endure_count == args.endure_times:
+            print(now_time() + 'Cannot endure it anymore | Exiting from early stop')
+            break
+        # Anneal the learning rate if no improvement has been seen in the validation dataset.
+        scheduler.step()
+        print(now_time() + 'Learning rate set to {:2.8f}'.format(scheduler.get_last_lr()[0]))
 
-    return results
+# Load the best saved model.
+with open(model_path, 'rb') as f:
+    model = torch.load(f).to(device)
 
+# Run on test data.
+test_c_loss, test_t_loss, test_r_loss = evaluate(test_data)
+print('=' * 89)
+print(now_time() + 'context ppl {:4.4f} | text ppl {:4.4f} | rating loss {:4.4f} on test | End of training'.format(
+    math.exp(test_c_loss), math.exp(test_t_loss), test_r_loss))
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PErsonalized Transformer for Explainable Recommendation (PETER)')
-
-    parser.add_argument('--dataset_name', type=str, default="")
-    parser.add_argument('--data_path', type=str, default=None,
-                        help='path for loading data')
-    parser.add_argument('--train_size', type=float, default=0.8,
-                        help='train size')
-    parser.add_argument('--eval_size', type=float, default=0.1,
-                        help='validation size')
-    parser.add_argument('--test_size', type=float, default=0.1,
-                        help='test size')
-    parser.add_argument('--train_path', type=str, default="",
-                        help='path for training data')
-    parser.add_argument('--eval_path', type=str, default="",
-                        help='path for validation data')
-    parser.add_argument('--test_path', type=str, default="",
-                        help='path for test data')
-    
-    parser.add_argument('--embedding_dim', type=int, default=512,
-                        help='size of embeddings')
-    parser.add_argument('--n_heads', type=int, default=2,
-                        help='the number of heads in the transformer')
-    parser.add_argument('--n_hiddens', type=int, default=2048,
-                        help='number of hidden units per layer')
-    parser.add_argument('--n_layers', type=int, default=2,
-                        help='number of layers')
-    parser.add_argument('--dropout', type=float, default=0.2,
-                        help='dropout applied to layers (0 = no dropout)')
-    
-    parser.add_argument('--clip', type=float, default=1.0,
-                        help='gradient clipping')
-    parser.add_argument('--vocab_size', type=int, default=20000,
-                        help='keep the most frequent words in the dict')
-    parser.add_argument('--endure_times', type=int, default=5,
-                        help='the maximum endure times of loss increasing on validation')
-    parser.add_argument('--lambda_rating', type=float, default=0.1,
-                        help='regularization on recommendation task')
-    parser.add_argument('--lambda_context', type=float, default=1.0,
-                        help='regularization on context prediction task')
-    parser.add_argument('--lambda_text', type=float, default=1.0,
-                        help='regularization on text generation task')
-    parser.add_argument('--peter_mask', action=argparse.BooleanOptionalAction, default=True,
-                        help='True to use peter mask; Otherwise left-to-right mask')
-    parser.add_argument('--use_features', action=argparse.BooleanOptionalAction, default=False,
-                        help='False: no feature; True: use the feature')
-    parser.add_argument('--review_length', type=int, default=128,
-                        help='number of words to generate for each sample')
-
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='learning rate')
-    parser.add_argument('--n_epochs', type=int, default=50,
-                        help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=128,
-                        help='batch size')
-    parser.add_argument('--log_interval', type=int, default=200,
-                        help='report interval')
-    parser.add_argument('--save_dir', type=str, default='./PEPLER/',
-                        help='directory to save the final model')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='random seed')
-    parser.add_argument('--load_model', action=argparse.BooleanOptionalAction)
-    parser.set_defaults(load_model=False)
-    
-    parser.add_argument('--threshold_rating', type=float, default=4.0,
-                        help='threshold for rating')
-    parser.add_argument('--ranking_metrics_flag', action=argparse.BooleanOptionalAction, default=True,
-                        help='whether to compute ranking metrics')
-    parser.add_argument('--lang', type=str, default='en',
-                        help='language')
-    
-    parser.add_argument("--truncate_flag", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(truncate_flag=True)
-    parser.add_argument("--lower_flag", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(lower_flag=True)
-    parser.add_argument("--delete_balise_flag", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(delete_balise_flag=True)
-    parser.add_argument("--delete_non_ascii_flag", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(delete_non_ascii_flag=True)
-
-    parser.add_argument("--verbose", action=argparse.BooleanOptionalAction)
-    parser.set_defaults(verbose=True)
-    
-    config = parser.parse_args()
-    main(config)
+print(now_time() + 'Generating text')
+text_o = generate(test_data)
+with open(prediction_path, 'w', encoding='utf-8') as f:
+    f.write(text_o)
+print(now_time() + 'Generated text saved to ({})'.format(prediction_path))

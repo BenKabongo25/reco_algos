@@ -141,23 +141,23 @@ def rating_evaluation(config: Any,
 def review_evaluation(config, predictions: List[str], references: List[str]) -> Dict[str, Any]:
     references_list = [[ref] for ref in references]
 
+    meteor_metric = evaluate.load("meteor")
+    meteor_results = meteor_metric.compute(predictions=predictions, references=references)
+
     bleu_metric = evaluate.load("bleu")
     bleu_results = bleu_metric.compute(predictions=predictions, references=references_list, )
     bleu_results["precision"] = np.mean(bleu_results["precisions"])
 
+    rouge_metric = evaluate.load("rouge")
+    rouge_results = rouge_metric.compute(predictions=predictions, references=references)
+
     bertscore_metric = evaluate.load("bertscore")
     bertscore_results = bertscore_metric.compute(
-        predictions=predictions, references=references, lang=config.lang
+        predictions=predictions, references=references, lang=config.lang, device=config.device
     )
     bertscore_results["precision"] = np.mean(bertscore_results["precision"])
     bertscore_results["recall"] = np.mean(bertscore_results["recall"])
     bertscore_results["f1"] = np.mean(bertscore_results["f1"])
-
-    meteor_metric = evaluate.load("meteor")
-    meteor_results = meteor_metric.compute(predictions=predictions, references=references)
-
-    rouge_metric = evaluate.load("rouge")
-    rouge_results = rouge_metric.compute(predictions=predictions, references=references)
 
     return {
         "n_examples": len(predictions),

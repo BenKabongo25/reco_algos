@@ -6,10 +6,11 @@ python3 main.py \
     --seed 42 \
     --lr 0.001 \
     --n_epochs 50 \
-    --batch_size 32 \
-    --save_dir /home/b.kabongo/exps/Hotels/PEPLER/ \
+    --batch_size 8 \
+    --save_dir /home/b.kabongo/exps/Hotels/PEPLER2/ \
     --truncate_flag \
     --review_length 128 \
     --lower_flag \
     --delete_balise_flag \
     --delete_non_ascii_flag \
+    --load_model \

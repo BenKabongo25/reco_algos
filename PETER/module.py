@@ -1,6 +1,3 @@
-# PETER
-# https://arxiv.org/pdf/2105.11601
-
 import math
 import copy
 import torch

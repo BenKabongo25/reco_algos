@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from data import *
 from module import *
-from utils import rating_evaluation, review_evaluation, set_seed
+from utils import *
 
 
 def train(model, config, optimizer, loss_fn, dataloader):
@@ -33,7 +33,7 @@ def train(model, config, optimizer, loss_fn, dataloader):
 
         optimizer.zero_grad()
         R_hat, logits = model(U_ids, I_ids, T_ids[:, :-1])
-        loss_ouputs = loss_fn(R, R_hat, T_ids[:, 1:], logits, model.parameters())
+        loss_ouputs = loss_fn(R, R_hat, T_ids[:, 1:], logits)
         loss = loss_ouputs["total"]
         loss.backward()
 
@@ -75,7 +75,8 @@ def eval(model, config, loss_fn, dataloader):
     return losses
 
 
-def generate_and_eval(model, config, dataloader, word_dict):
+def generate_and_eval(model, config, dataloader, word_dict, 
+                      rating_metrics=RATING_METRICS, review_metrics=REVIEW_METRICS):
     model.eval()
     
     users = []
@@ -115,8 +116,8 @@ def generate_and_eval(model, config, dataloader, word_dict):
                     log += f"-" * 80
                     config.logger.info(log)
 
-    rating_scores = rating_evaluation(config, prediction_ratings, reference_ratings)
-    reviews_scores = review_evaluation(config, prediction_reviews, reference_reviews)
+    rating_scores = rating_evaluation(config, prediction_ratings, reference_ratings, rating_metrics)
+    reviews_scores = review_evaluation(config, prediction_reviews, reference_reviews, review_metrics)
     if config.verbose:
         log = ""
         for metric, score in rating_scores.items():
@@ -144,7 +145,8 @@ def trainer(model, config, train_dataloader, eval_dataloader, word_dict):
     train_infos = {}
     eval_infos = {}
 
-    best_loss = float("inf")
+    best_bleu = -float("inf")
+    best_rmse = float("inf")
     progress_bar = tqdm(range(1, 1 + config.n_epochs), "Training", colour="blue")
     for epoch in progress_bar:
         train_epoch_infos = train(model ,config, optimizer, loss_fn, train_dataloader)
@@ -155,27 +157,39 @@ def trainer(model, config, train_dataloader, eval_dataloader, word_dict):
             train_infos[k_1].append(train_epoch_infos[k_1])
 
         train_loss = train_epoch_infos["total"]
-        desc = f"[{epoch} / {config.n_epochs}] Loss: {train_loss:.4f} best={best_loss:.4f}"
+        desc = (
+            f"[{epoch} / {config.n_epochs}] " +
+            f"train: loss={train_loss:.4f} " +
+            f"best: rmse={best_rmse:.4f} bleu={best_bleu:.4f}"
+        )
 
         if epoch % config.eval_every == 0:
-            eval_epoch_infos = eval(model, config, loss_fn, eval_dataloader)
+            rating_scores, reviews_scores, _ = generate_and_eval(
+                model, config, eval_dataloader, word_dict,
+                rating_metrics=[RMSE], review_metrics=[BLEU]
+            )
+            eval_epoch_infos = {**rating_scores, **reviews_scores}
             
             for k_1 in eval_epoch_infos.keys():
                 if k_1 not in eval_infos.keys():
                     eval_infos[k_1] = []
                 eval_infos[k_1].append(eval_epoch_infos[k_1])    
 
-            test_loss = eval_epoch_infos["total"]
+            test_bleu = eval_epoch_infos["bleu"]
+            test_rmse = eval_epoch_infos["rmse"]
 
-            if test_loss < best_loss:
-                best_loss = test_loss
+            if test_bleu > best_bleu:
+                best_bleu = test_bleu
                 model.save(config.save_model_path)
+            if test_rmse < best_rmse:
+                best_rmse = test_rmse
+                #model.save(config.save_model_path)
 
             desc = (
                 f"[{epoch} / {config.n_epochs}] " +
-                f"Loss: train={train_loss:.4f} " +
-                f"test={test_loss:.4f} " +
-                f"best={best_loss:.4f}"
+                f"train: loss={train_loss:.4f} " +
+                f"eval: rmse={test_rmse:.4f} bleu={test_bleu:.4f} " +
+                f"best: rmse={best_rmse:.4f} bleu={best_bleu:.4f}"
             )
 
         progress_bar.set_description(desc)
